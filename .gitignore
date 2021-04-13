@@ -17,7 +17,6 @@ programs/WebApp_Tracelog*
 appsrc/config
 idesrc
 Data/*.cch
-data/*.dat
 data/*.k*
 data/*.hdr
 
