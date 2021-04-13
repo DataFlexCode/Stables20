@@ -1,0 +1,99 @@
+﻿//> If you are looking for a command-line way to convert html to pdf I have found a component
+//> to do so here: wkhtmltopdf.org.
+//>
+//> A lot of commandline parameters:  https://wkhtmltopdf.org/usage/wkhtmltopdf.txt
+//>
+//> <code>
+//> wkhtmltopdf test.html test.pdf
+//> </code>
+//>
+//> In addition it understands a host of cmdline options that I have not yet ventured into. But If you want your webapp
+//> to return PDF reports instead of html reports, this seems a way to go.
+//> pkg.doc.end
+Use cRegistry.pkg
+Use StartProg.pkg
+Use FileFunctions.pkg
+
+//> This object encapsulates some functions that are based on the wkhtmltopdf command.
+Class cWkHtmlToPdfCommander is a cObject
+    //>
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String psWkHtmlToPdfExePath ""
+    End_Procedure
+
+    // This constant is needed to enable the cRegistry class to read
+    // value from the 64 bit part of the registry (we ourselves are a
+    // 32 bit program).
+    Define wkKEY_WOW64_64KEY for |CI$0100
+
+    Function HtmlToPdfExeFile Returns String
+        Integer hoRegistry
+        Boolean bFound // bIs64BitWindows
+        String sExeFile sKey sVer
+
+        Get Create (RefClass(cRegistry)) to hoRegistry
+        Set phRootKey of hoRegistry to HKEY_LOCAL_MACHINE
+        Set pfAccessRights of hoRegistry to (Key_Read ior wkKEY_WOW64_64KEY)
+        Get OpenKey of hoRegistry "SOFTWARE\wkhtmltopdf" to bFound
+        If (bFound) Begin
+            If (ValueExists(hoRegistry,"PdfPath")) Begin
+                Get ReadString of hoRegistry "PdfPath" to sExeFile
+            End
+            If (ValueExists(hoRegistry,"Version")) Begin
+                Get ReadString of hoRegistry "Version" to sVer
+            End
+            Send CloseKey of hoRegistry
+        End
+
+        Send Destroy of hoRegistry
+        If (IsDebuggerPresent()) Begin
+            If (sExeFile="") Begin
+                Showln "wkhtmltopdf.exe file not found"
+            End
+            Else Begin
+                Showln ("wkHtmlToPdf folder: "+sExeFile+"   (ver "+sVer+")")
+            End
+        End
+        Function_Return sExeFile
+    End_Function
+
+    //> Must be called before the object can be used.
+    Procedure _ActivateComponent_wkHtmlToPdf
+        String sExeFile
+        Get psWkHtmlToPdfExePath to sExeFile
+        If (sExeFile="") Begin
+            Get HtmlToPdfExeFile to sExeFile
+            Set psWkHtmlToPdfExePath to sExeFile
+        End
+        Get psWkHtmlToPdfExePath to sExeFile
+        If (sExeFile="") Begin
+            Error DFERR_PROGRAM "wkHtmlToPdf is not installed on this machine. Go here: https://wkhtmltopdf.org/downloads.html"
+        End
+    End_Procedure
+
+//    Property String psWkHtmlToPdfExePath (HtmlToPdfExeFile(Self)) // "C:\Program Files\ImageMagick-6.9.1-Q16"
+
+    Function IsReady Returns Boolean
+        String sExeFile
+        Get psWkHtmlToPdfExePath to sExeFile
+        Function_Return (sExeFile<>"")
+    End_Function
+    
+    Function ConvertHtmlToPDF String sHtmlFile String sPdfFile Returns Boolean
+        Integer iReturn
+        String sCommand sParams
+        
+        Get psWkHtmlToPdfExePath to sCommand
+        Move ('"'+sHtmlFile+'" "'+sPdfFile+'"') to sParams
+                
+        Move (ff_ShellExecute(0,"",sCommand,sParams,"",0)) to iReturn
+        
+        If (iReturn<=32) Begin
+            Error DFERR_PROGRAM ("ff_ShellExecute failed (code: "+String(iReturn)+")")
+        End
+
+        Function_Return (FileExists(oFileFunctions,sPdfFile)=1)
+    End_Function
+    
+End_Class

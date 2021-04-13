@@ -1,0 +1,15 @@
+[Properties]
+Version=20.0
+[WorkspacePaths]
+ConfigFile=.\Programs\Config.ws
+[Conditionals]
+Is$WebApp=False
+Is$Win64=False
+[Projects]
+Project0=TestProjects\TestFunctions.src
+Project1=WebApp.src
+Project2=Projects\chmdecoder\dfChmDecoder.src
+Project3=TestProjects\TestNewGrid.src
+Project4=Stables20WorkspaceCopier.src
+Project5=VDFQueryWorkspaceCopier.src
+Project6=TestFileFunctions.src

@@ -1,0 +1,192 @@
+﻿Use AllWebAppClasses.pkg
+Use cWebMenuItemLoadView.pkg
+
+Object oApplication is a cApplication
+    Set pbPreserveEnvironment to False
+    Set peHelpType to htHtmlHelp
+
+    Object oConnection is a cConnection
+        Use LoginEncryption.pkg
+        Use DatabaseLoginDialog.dg
+    End_Object
+End_Object
+
+Object oWebApp is a cWebApp
+    Set psTheme to "Df_Web_Creme"
+    Set peLoginMode to lmLoginNone
+    Set psEncryptPassword to "s<q#791(Q#XA]r#^)jf9`#3QWtmwm#Ra~R~#-Q5n"
+    Set peAlignView to alignCenter
+
+    Object oCommandbar is a cWebCommandBar
+        Object oMenuBar is a cWebMenuBar
+            Object oFileMenu is a cWebMenuItem
+                Set psCaption to C_$File
+                
+                Object oClearMenuItem is a cWebMenuClear
+                End_Object  
+                             
+                Object oClearAllMenuItem is a cWebMenuClearAll
+                End_Object  
+                
+                Object oPromptMenuItem is a cWebMenuPrompt
+                    Set pbBeginGroup to True
+                End_Object  
+                               
+                Object oFindMenuItem is a cWebMenuFind
+                End_Object  
+
+                Object oNextMenuItem is a cWebMenuFindNext
+                End_Object  
+
+                Object oPreviousMenuItem is a cWebMenuFindPrevious
+                End_Object  
+                
+                Object oLastMenuItem is a cWebMenuFindLast
+                End_Object                
+                                
+                Object oFirstMenuItem is a cWebMenuFindFirst
+                End_Object  
+                
+                Object oSaveMenuItem is a cWebMenuSave
+                    Set pbBeginGroup to True
+                End_Object  
+                
+                Object oDeleteMenuItem is a cWebMenuDelete
+                End_Object  
+                
+                Object oLoginMenuItem is a cWebMenuItem
+                    Set psCaption to C_$LogIn
+                    Set pbBeginGroup to True
+                    Set psCSSClass to "WebLoginMenuItem"
+
+                    Procedure OnClick
+                        Send RequestLogin to ghoWebSessionManager
+                    End_Procedure
+                    
+                    Procedure OnLoad
+                        Integer eLoginMode
+                        Handle hoLogin
+                        Get phoLoginView to hoLogin
+                        Get peLoginMode to eLoginMode
+                        WebSet pbRender to  (hoLogin and eLoginMode<>lmLoginNone)
+                    End_Procedure  // OnLoad
+                    
+                End_Object  
+
+                Object oLogoutMenuItem is a cWebMenuItem
+                    Set psCaption to C_$LogOut
+                    Set psCSSClass to "WebLogoutMenuItem"
+
+                    Procedure OnClick
+                        Send RequestLogOut of ghoWebSessionManager
+                    End_Procedure
+
+                    Procedure OnLoad
+                        Integer eLoginMode
+                        Handle hoLogin
+                        Get phoLoginView to hoLogin
+                        Get peLoginMode to eLoginMode
+                        WebSet pbRender to  (hoLogin and eLoginMode<>lmLoginNone)
+                    End_Procedure
+                End_Object  
+            End_Object  
+    
+            Object oViewMenu is a cWebMenuItem
+                Set psCaption to C_$View
+
+                Object oBasicviewMenuItem1 is a cWebMenuItemLoadView
+                    Set psCaption to "HTML sequences - cWebHtmlBox subclass"
+                    Set psLoadViewOnClick to "oFreeStyleWo"
+                End_Object
+
+                Object oBasicviewMenuItem2 is a cWebMenuItemLoadView
+                    Set psCaption to "SVG - cWebHtmlBox minitest"
+                    Set psLoadViewOnClick to "oTestSvgView"
+                End_Object
+
+                Object oBasicviewMenuItem3 is a cWebMenuItemLoadView
+                    Set psCaption to "Google Fonts - cWebHtmlBox minitest"
+                    Set psLoadViewOnClick to "oGoogleFontTest"
+                End_Object
+
+                Object oTestCKEditorMenuItem1 is a cWebMenuItemLoadView
+                    Set psCaption to "CKEditor - cWebHtmlBox subclass"
+                    Set psLoadViewOnClick to "oTestCKEditor"
+                End_Object
+
+                Object oJustifiedGallerycWebHtmlBoxsubclassMenuItem1 is a cWebMenuItemLoadView
+                    Set psCaption to "Justified Gallery - cWebHtmlBox subclass"
+                    Set psLoadViewOnClick to "oJustifiedGallery"
+                End_Object
+
+                Object oJustifiedGallerySlideshowcWebHtmlBoxsubclassMenuItem1 is a cWebMenuItemLoadView
+                    Set psCaption to "Justified Gallery - Slideshow - cWebHtmlBox subclass"
+                    Set psLoadViewOnClick to "oJustifiedGallerySlideShow"
+                End_Object
+
+                Object oBlogManiaMenuItem1 is a cWebMenuItemLoadView
+                    Set psCaption to "Blog Mania"
+                    Set psLoadViewOnClick to "oBlogManiaView"
+                End_Object
+
+            End_Object  
+        End_Object  
+        
+        Object oFindToolBar is a cWebToolBar
+            Object oFirstMenuItem is a cWebMenuFindFirst
+            End_Object  
+    
+            Object oPreviousMenuItem is a cWebMenuFindPrevious
+            End_Object  
+
+            Object oFindMenuItem is a cWebMenuFind
+            End_Object  
+
+            Object oNextMenuItem is a cWebMenuFindNext
+            End_Object  
+            
+            Object oLastMenuItem is a cWebMenuFindLast
+            End_Object
+                           
+            Object oPromptMenuItem is a cWebMenuPrompt
+            End_Object 
+        End_Object
+        
+        Object oFileToolBar is a cWebToolBar
+            Set pbShowCaption to True
+            
+            Object oClearMenuItem is a cWebMenuClear
+            End_Object              
+             
+            Object oClearAllMenuItem is a cWebMenuClearAll
+            End_Object   
+                        
+            Object oSaveMenuItem is a cWebMenuSave
+            End_Object  
+            
+            Object oDeleteMenuItem is a cWebMenuDelete
+            End_Object 
+        End_Object
+    End_Object
+
+    Use SessionManager.wo
+    Use WebResourceManager.wo
+    Use Web\cWebSessionFolderAccess.pkg
+    
+    Object oWebSessionFolderAccess is a cWebSessionFolderAccess
+        Set pbUploadEnable to True
+        Set pbDownloadEnable to True
+    End_Object
+    
+    Use LoginDialog.wo
+    Use TestProjects\Web\FreeStyleWo.wo
+    Use TestProjects\Web\TestSvgView.wo
+    Use TestProjects\Web\GoogleFontTest.wo
+    Use TestProjects\Web\TestCKEditor.wo
+    Use TestProjects\Web\JustifiedGallery.wo
+    Use TestProjects\Web\JustifiedGallerySlideShow.wo
+    Use TestProjects\Web\BlogManiaView.wo
+//    Set phoDefaultView to odbiViewTestDatabaseScript
+End_Object
+
+Send StartWebApp of oWebApp

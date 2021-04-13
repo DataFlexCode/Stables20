@@ -1,0 +1,486 @@
+﻿//> Use RegistryFunctions.pkg //
+//> pkg.doc.end
+
+Use NamedValueFunctions.pkg
+Use FileFunctions.pkg // Define oFileFunctions object
+Use cRegistry.pkg
+
+Struct tRegKeyData
+    Integer hRoot
+    String sKey
+    String[] aSubKeys
+    tNamedValue[] aValues
+End_Struct
+
+Define KEY_WOW64_64KEY for |CI$0100
+Define KEY_WOW64_32KEY for |CI$0200
+
+//Class cRegistryStables is a cRegistry
+//    Procedure Construct_Object
+//        Forward Send Constrain
+//        Property Integer _piAccessMode 0 // 0: no tamper, 32: add KEY_WOW64_32KEY, 64: add KEY_WOW64_64KEY
+//    End_Procedure
+//        
+//    Procedure SetAccessMode Integer iBitness Integer iRights 
+//        Set _piAccessMode to iBitness
+//        If ((iRights ior KEY_WOW64_64KEY) or (iRights ior KEY_WOW64_32KEY)) Begin
+//            Error DFERR_PROGRAM "Illegal use of cRegistryStables object (rights can't include bitness)"
+//        End
+//        Else Begin
+//            If (iBitness=0) Begin
+//                Set pfAccessRights to iRights    
+//            End
+//            Else If (iBitness=32) Begin
+//                Set pfAccessRights to (iRights ior KEY_WOW64_32KEY)
+//            End
+//            Else If (iBitness=64) Begin
+//                Set pfAccessRights to (iRights ior KEY_WOW64_64KEY)
+//            End
+//            Else Begin
+//                Error DFERR_PROGRAM "Illegal mode for cRegistryStables object (must be 0, 32 or 64)"
+//            End
+//        End
+//    End_Procedure
+//
+//        // iBitness:  0: pfAccessRights=KEY_READ  32: pfAccessRights=(KEY_READ ior KEY_WOW64_32KEY)  64: pfAccessRights=(KEY_READ ior KEY_WOW64_64KEY)
+//        Function _ReadKeyData Handle hRoot String sKey tRegKeyData ByRef stKeyData Boolean bReadBinaries Returns Boolean
+//            Boolean bOpen
+//            Integer iKey iMaxKey iValueType 
+//            Handle hoArray
+//            String sName
+//            String[] aValues
+//            tRegKeyData stEmptyKeyData
+//            
+//            Move stEmptyKeyData to stKeyData
+//            Move hRoot to stKeyData.hRoot
+//            Move sKey to stKeyData.sKey
+//            
+//            Set phRootKey to hRoot
+//            Get OpenKey sKey to bOpen
+//            If (bOpen) Begin
+//            
+//                Get Create U_Array to hoArray // Create an array object
+//                Get GetSubkeys hoArray to iMaxKey
+//                Decrement iMaxKey
+//              
+//                For iKey from 0 to iMaxKey
+//                    Get Value of hoArray iKey to stKeyData.aSubKeys[iKey]
+//                Loop
+//                
+//                Send Delete_Data of hoArray
+//                Get GetValues hoArray to iMaxKey
+//                Decrement iMaxKey
+//                
+//                For iKey from 0 to iMaxKey
+//                    Get Value of hoArray iKey to sName
+//                    Move sName to stKeyData.aValues[iKey].sName 
+//                    
+//                    Get ValueType sName to iValueType
+//                    
+//                    If (iValueType=rdString) Begin
+//                        Get ReadString sName to stKeyData.aValues[iKey].sValue
+//                    End
+//                    Else If (iValueType=rdDword) Begin
+//                        Get ReadDword sName to stKeyData.aValues[iKey].sValue
+//                    End
+//                    If (iValueType=rdBinary) Begin // Not that simple
+//                        //Get ReadBinary sName to stKeyData.aValues[iKey].sValue
+//                    End
+//                    If (iValueType=rdUnknown) Begin
+//                    End
+//                Loop
+//                
+//                Send CloseKey // must close all open Keys
+//                
+//                Send Destroy of hoArray // Remove the array object from memory.
+//                Function_Return True
+//            End
+//            Function_Return False
+//        End_Function
+//End_Class
+
+//> oRegistryFunctions is a synonym for the _oRegistryFunctions
+Global_Variable Integer oRegistryFunctions
+
+//> This object should be referenced via the oRegistryFunctions symbol.
+//> 
+//> The _oRegistryFunctions object contains some functions for accesssing the registry.
+Object _oRegistryFunctions is a cObject
+    
+    Move Self to oRegistryFunctions
+//        Move (KEY_READ ior KEY_WOW64_64KEY) to iKey64
+//        
+//        Move 0 to hKeyOpened // initialize so we can get its address
+//
+//        Move (RegOpenKeyEx(HKEY_LOCAL_MACHINE, ToAnsi(sKeyName), 0, iKey64, AddressOf(hKeyOpened))) to iError
+
+        
+    Object _oRegistry is a cRegistry // Private
+        Set pbLazyWrite to False
+        Set pfAccessRights to KEY_READ
+//        Set pfAccessRights to KEY_ALL_ACCESS
+
+        // iBitness:  0: pfAccessRights=KEY_READ  32: pfAccessRights=(KEY_READ ior KEY_WOW64_32KEY)  64: pfAccessRights=(KEY_READ ior KEY_WOW64_64KEY)
+        Function _ReadKeyData Handle hRoot String sKey tRegKeyData ByRef stKeyData Boolean bReadBinaries Integer iBitness Returns Boolean
+            Boolean bOpen
+            Integer iKey iMaxKey iValueType 
+            Handle hoArray
+            String sName
+            String[] aValues
+            tRegKeyData stEmptyKeyData
+            
+            Move stEmptyKeyData to stKeyData
+            Move hRoot to stKeyData.hRoot
+            Move sKey to stKeyData.sKey
+            
+            If (iBitness=0) Begin
+                Set pfAccessRights to KEY_READ
+            End
+            Else If (iBitness=32) Begin
+                Set pfAccessRights to (KEY_READ ior KEY_WOW64_32KEY)
+            End
+            Else If (iBitness=64) Begin
+                Set pfAccessRights to (KEY_READ ior KEY_WOW64_64KEY)
+            End
+            Else Begin
+                Error DFERR_PROGRAM "Illegal iBitness parameter for function _ReadKeyData"
+            End
+
+            
+            Set phRootKey to hRoot
+            Get OpenKey sKey to bOpen
+            If (bOpen) Begin
+            
+                Get Create U_Array to hoArray // Create an array object
+                Get GetSubkeys hoArray to iMaxKey
+                Decrement iMaxKey
+              
+                For iKey from 0 to iMaxKey
+                    Get Value of hoArray iKey to stKeyData.aSubKeys[iKey]
+                Loop
+                
+                Send Delete_Data of hoArray
+                Get GetValues hoArray to iMaxKey
+                Decrement iMaxKey
+                
+                For iKey from 0 to iMaxKey
+                    Get Value of hoArray iKey to sName
+                    Move sName to stKeyData.aValues[iKey].sName 
+                    
+                    Get ValueType sName to iValueType
+                    
+                    If (iValueType=rdString) Begin
+                        Get ReadString sName to stKeyData.aValues[iKey].sValue
+                    End
+                    Else If (iValueType=rdDword) Begin
+                        Get ReadDword sName to stKeyData.aValues[iKey].sValue
+                    End
+    //                        If (iValueType=rdBinary) Begin // Not that simple
+    //                            //Get ReadBinary sName to stKeyData.aValues[iKey].sValue
+    //                        End
+    //                        If (iValueType=rdUnknown) Begin
+    //                        End
+                Loop
+                
+                Send CloseKey // must close all open Keys
+                
+                Send Destroy of hoArray // Remove the array object from memory.
+                Function_Return True
+            End
+            Function_Return False
+        End_Function
+
+        // Types: rdString rdDword rdBinary 
+        Procedure _WriteRegValue Handle hRoot String sKey String sName String sValue Integer iValueType Integer iBitness
+            Boolean bExists bOpened 
+            Integer iType
+            
+            Set phRootKey to hRoot
+
+            If (iBitness=0) Begin
+                Set pfAccessRights to KEY_ALL_ACCESS
+            End
+            Else If (iBitness=32) Begin
+                Set pfAccessRights to (KEY_ALL_ACCESS ior KEY_WOW64_32KEY)
+            End
+            Else If (iBitness=64) Begin
+                Set pfAccessRights to (KEY_ALL_ACCESS ior KEY_WOW64_64KEY)
+            End
+//            If (iBitness=0) Begin
+//                Set pfAccessRights to KEY_READ
+//            End
+//            Else If (iBitness=32) Begin
+//                Set pfAccessRights to (KEY_READ ior KEY_WOW64_32KEY)
+//            End
+//            Else If (iBitness=64) Begin
+//                Set pfAccessRights to (KEY_READ ior KEY_WOW64_64KEY)
+//            End
+            Else Begin
+                Error DFERR_PROGRAM "Illegal iBitness parameter for procedure _WriteRegValue"
+            End
+            
+            Get _KeyExistsCreateIfNot hRoot sKey iBitness to bExists
+            If (bExists) Begin
+//            If (True) Begin
+                
+                If (iBitness=0) Begin
+                    Set pfAccessRights to KEY_READ
+                End
+                Else If (iBitness=32) Begin
+                    Set pfAccessRights to (KEY_READ ior KEY_WOW64_32KEY)
+                End
+                Else If (iBitness=64) Begin
+                    Set pfAccessRights to (KEY_READ ior KEY_WOW64_64KEY)
+                End
+                Get OpenKey sKey to bOpened
+                If (bOpened) Begin
+                    If (ValueExists(Self,sName)) Begin
+                        Get ValueType sName to iType
+                    End
+                    Else Begin
+                        Move iValueType to iType
+                    End
+                    
+                    Send CloseKey
+                    
+                    If (iBitness=0) Begin
+                        Set pfAccessRights to KEY_ALL_ACCESS
+                    End
+                    Else If (iBitness=32) Begin
+                        Set pfAccessRights to (KEY_ALL_ACCESS ior KEY_WOW64_32KEY)
+                    End
+                    Else If (iBitness=64) Begin
+                        Set pfAccessRights to (KEY_ALL_ACCESS ior KEY_WOW64_64KEY)
+                    End
+                    If (iType=rdString) Begin
+                        Send WriteString sName sValue
+                    End
+                    Else If (iType=rdDword) Begin
+                        Send WriteDword sName sValue
+                    End
+                    Else If (iType=rdBinary) Begin
+                        Send WriteBinary sName (AddressOf(sValue)) (Length(sValue))
+                    End
+                    Else Begin
+                        Error 803 "Illegal value type"
+                    End
+                    
+                End
+                Else Begin
+                    Error 802 "Insufficient rights to change value of registry key"
+                End
+                Set pfAccessRights to KEY_READ
+            End
+            Else Begin
+                Error 802 "Registry key does not exist"
+            End
+        End_Procedure
+        
+        Function _DeleteRegValue Handle hRoot String sKey String sName Integer iBitness Returns Boolean
+            Boolean bExists bOpened bSucces 
+            Integer iType
+            Set phRootKey to hRoot
+            
+            Set pfAccessRights to KEY_ALL_ACCESS
+            Get _KeyExistsCreateIfNot hRoot sKey iBitness to bExists
+            If (bExists) Begin
+                Get OpenKey sKey to bOpened
+                If (bOpened) Begin
+                    If (ValueExists(Self,sName)) Begin                          
+                        Get DeleteValue sName to bSucces
+                    End
+                    
+                    Send CloseKey
+                End
+                Else Begin
+                    Error 802 "Insufficient rights to change value of registry key"
+                End
+                Set pfAccessRights to KEY_READ
+            End
+//            Else Begin
+//                Error 802 "Registry key does not exist"
+//            End
+            Function_Return bSucces
+        End_Function
+        
+        Function _DeleteRegKey Handle hRoot String sKey String sSubKey Integer iBitness Returns Boolean
+            Boolean bExists bOpened bSucces 
+            Integer iType
+            Set phRootKey to hRoot
+            
+            Set pfAccessRights to KEY_ALL_ACCESS
+            If (iBitness=32) Begin
+                Set pfAccessRights to (KEY_ALL_ACCESS ior KEY_WOW64_32KEY)
+            End
+            If (iBitness=64) Begin
+                Set pfAccessRights to (KEY_ALL_ACCESS ior KEY_WOW64_64KEY)
+            End
+            Get KeyExists sKey iBitness to bExists
+            If (bExists) Begin
+                Get OpenKey sKey to bOpened
+                If (bOpened) Begin
+                    If (KeyExists(Self,sSubKey,iBitness)) Begin
+                        Get DeleteKey (sKey+"\"+sSubKey) to bSucces
+                    End
+                    
+                    Send CloseKey
+                End
+                Else Begin
+                    Error 802 "Insufficient rights to delete sub-registry-key"
+                End
+                Set pfAccessRights to KEY_READ
+            End
+//            Else Begin
+//                Error 802 "Registry key does not exist"
+//            End
+            Function_Return bSucces
+        End_Function
+            
+    End_Object // _oRegistry
+
+    Enum_List // Standard Registry Keys
+        Define SRK_VDF_ROOT
+        Define SRK_VDF_ROOT_CURRENT_VERSION
+    End_Enum_List
+
+    Function _CurrentVdfVer Returns String
+        String sMajor sMinor
+        Move (String(FMAC_VERSION)) to sMajor
+        Move (String(FMAC_REVISION)) to sMinor
+        Function_Return (sMajor+"."+sMinor)
+    End_Function
+    
+//    Procedure GetStandardKey Integer iKey Handle ByRef hRoot String ByRef sKey
+//        String sVdfVer
+//        If (iKey=SRK_VDF_ROOT) Begin
+//            Move HKEY_LOCAL_MACHINE to hRoot
+//            Move "SOFTWARE\Data Access Worldwide\Visual DataFlex" to sKey
+//        End
+//        If (iKey=SRK_VDF_ROOT_CURRENT_VERSION) Begin
+//            Move HKEY_LOCAL_MACHINE to hRoot
+//            Get _CurrentVdfVer to sVdfVer
+//            Move ("SOFTWARE\Data Access Worldwide\Visual DataFlex\"+sVdfVer) to sKey
+//        End
+//    End_Procedure
+    
+    //><code>
+    //>  Use RegistryFunctions.pkg
+    //> 
+    //>  ...
+    //> 
+    //>  Function ImageMagickCurrentVersionFolder Returns String
+    //>      String sFolder
+    //>      tRegKeyData stKeyData
+    //>      If (ReadKeyData(oRegistryFunctions,HKEY_LOCAL_MACHINE,"SOFTWARE\ImageMagick\Current",&stKeyData,False)) Begin
+    //>          Get NamedRegValue of oRegistryFunctions stKeyData "BinPath" to sFolder
+    //>      End
+    //>      Function_Return sFolder
+    //>  End_Function
+    //></code>
+
+//    Function ReadKeyDataNew
+//    End_Function    
+
+    Function ReadKeyDataBitness Handle hRoot String sKey tRegKeyData ByRef stKeyData Boolean bReadBinaries Integer iBitness Returns Boolean
+        Function_Return (_ReadKeyData(_oRegistry,hRoot,sKey,&stKeyData,bReadBinaries,iBitness))
+    End_Function
+    
+    Function ReadKeyData Handle hRoot String sKey tRegKeyData ByRef stKeyData Boolean bReadBinaries Returns Boolean
+        Function_Return (_ReadKeyData(_oRegistry,hRoot,sKey,&stKeyData,bReadBinaries,0))
+    End_Function
+
+    Function ReadKeyData32 Handle hRoot String sKey tRegKeyData ByRef stKeyData Boolean bReadBinaries Returns Boolean
+        Function_Return (_ReadKeyData(_oRegistry,hRoot,sKey,&stKeyData,bReadBinaries,32))
+    End_Function
+
+    Function ReadKeyData64 Handle hRoot String sKey tRegKeyData ByRef stKeyData Boolean bReadBinaries Returns Boolean
+        Function_Return (_ReadKeyData(_oRegistry,hRoot,sKey,&stKeyData,bReadBinaries,64))
+    End_Function
+
+    Function NamedRegValue tRegKeyData stKeyData String sName Returns String
+        tNamedValueList strList
+        String sValue
+        Get NewNamedValueList of oNamedValueFunctions True to strList
+        Move stKeyData.aValues to strList.aNamedValues
+        Get NamedValue of oNamedValueFunctions strList sName to sValue
+        Function_Return sValue
+    End_Function
+    
+    Function KeyExists Handle hRoot String sKey Integer iBitness Returns Boolean
+        Boolean bExists
+        UInteger iAccessRights iNew
+        Get pfAccessRights of _oRegistry to iAccessRights
+        Move KEY_READ to iNew
+        If (iBitness=32) Begin
+            Move (iNew ior KEY_WOW64_32KEY) to iNew
+        End
+        If (iBitness=64) Begin
+            Move (iNew ior KEY_WOW64_64KEY) to iNew
+        End
+        Set pfAccessRights of _oRegistry to iNew
+        Set phRootKey of _oRegistry to hRoot
+        Get KeyExists of _oRegistry sKey to bExists
+        Set pfAccessRights of _oRegistry to iAccessRights
+        Function_Return bExists
+    End_Function
+    
+    Function CreateKey Handle hRoot String sKey Returns Boolean
+        Integer iError
+        Set phRootKey of _oRegistry to hRoot
+        Get CreateKey of _oRegistry sKey to iError
+        If (iError<>0) Begin
+            Send Info_Box ("CreateKey returned the following error from Windows: "+String(iError))
+        End
+        Function_Return (iError=0)
+//        Function_Return (CreateKey(_oRegistry,sKey))
+    End_Function
+    
+    Function _KeyExistsCreateIfNot Handle hRoot String sKey Integer iBitness Returns Boolean
+        Boolean bCreated
+        String sParentKey 
+        If (sKey="") Begin
+            Function_Return False
+        End
+        If (not(KeyExists(Self,hRoot,sKey,iBitness))) Begin
+            Get PathToFolder of oFileFunctions sKey to sParentKey
+            Get _KeyExistsCreateIfNot hRoot sParentKey iBitness to bCreated
+            If (bCreated) Begin
+                Get CreateKey hRoot sKey to bCreated
+                If (bCreated) Begin
+                    Send CloseKey of _oRegistry 
+                End
+                Function_Return bCreated
+            End
+        End
+        Function_Return (KeyExists(Self,hRoot,sKey,iBitness))
+    End_Function
+
+    Procedure WriteRegValueBitness Handle hRoot String sKey String sName String sValue Integer iValueType Integer iBitness
+        Send _WriteRegValue of _oRegistry hRoot sKey sName sValue iValueType iBitness
+    End_Procedure
+    // iValueType is rdString rdDword or rdBinary
+    Procedure WriteRegValue Handle hRoot String sKey String sName String sValue Integer iValueType 
+        Send _WriteRegValue of _oRegistry hRoot sKey sName sValue iValueType 0
+    End_Procedure
+    
+    Procedure WriteRegValue32 Handle hRoot String sKey String sName String sValue Integer iValueType 
+        Send _WriteRegValue of _oRegistry hRoot sKey sName sValue iValueType 32
+    End_Procedure
+    
+    Procedure WriteRegValue64 Handle hRoot String sKey String sName String sValue Integer iValueType 
+        Send _WriteRegValue of _oRegistry hRoot sKey sName sValue iValueType 64
+    End_Procedure
+    
+    Function DeleteRegValue Handle hRoot String sKey String sName Integer iBitness Returns Boolean
+        Boolean bSucces
+        Get _DeleteRegValue of _oRegistry hRoot sKey sName iBitness to bSucces
+        Function_Return bSucces
+    End_Function
+    
+    Function DeleteRegKey Handle hRoot String sKey String sSubKey Integer iBitness Returns Boolean
+        Boolean bSucces
+        Get _DeleteRegKey of _oRegistry hRoot sKey sSubKey iBitness to bSucces
+        Function_Return bSucces
+    End_Function
+        
+End_Object

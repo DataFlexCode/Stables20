@@ -1,0 +1,68 @@
+Use Windows.pkg
+Use cApplication.pkg
+Use cConnection.pkg
+
+//Use WorkSpaceFunctions.pkg
+
+Object oApplication is a cApplication
+    Set peHelpType to htHtmlHelp
+
+    Object oConnection is a cConnection
+        Use LoginEncryption.pkg
+        Use DatabaseLoginDialog.dg
+    End_Object
+End_Object
+
+Use WorkspaceCopier\cWorkspaceCopier.pkg
+
+Object oWorkspaceCopierVDFQuery is a cWorkspaceCopier
+    Set psWorkspaceId to "VDFQuery"
+
+    // The folder structure:
+    Object oFolderWorkspace is a cWSCopyFolder
+
+        Send SetFolder "" False // "" is reserved for the root folder of the workspace
+        Send AddFileTypes "*.sws;readme.txt"
+
+        Object oFolderAppSrc is a cWSCopyFolder
+            Send SetFolder "AppSrc" True // include all subfolders by default
+            Send AddFileTypes C_WSCF_DFSOURCE_MASKS
+            Send AddFileTypes C_WSCF_VDFQSOURCE_MASKS
+
+            Object oFolderConfig is a cWSCopyFolder
+                Send SetFolder "config" False
+                Send AddFileTypes "classlist.xml;*.bmp;*.dfo"
+            End_Object
+        End_Object
+
+        Object oFolderDDSrc is a cWSCopyFolder
+            Send SetFolder "DDSrc" False
+//            Send AddFileTypes C_WSCF_DFSOURCE_MASKS
+//            Send AddFileTypes "ddclasslist.xml"
+        End_Object
+
+        Object oFolderData is a cWSCopyFolder
+            Send SetFolder "Data" False
+            Send AddFileTypes C_WSCF_DATA_MASKS
+        End_Object
+
+        Object oFolderBitmaps is a cWSCopyFolder
+            Send SetFolder "Bitmaps" False
+            Send AddFileTypes "*.bmp"
+        End_Object
+
+        Object oFolderPrograms is a cWSCopyFolder
+            Send SetFolder "Programs" False
+            Send AddFileTypes "*.ws"
+            Send AddFileTypes "vpec3272.dll"
+        End_Object
+    End_Object
+
+End_Object
+
+Global_Variable Integer ghoWorkspaceCopier
+Move oWorkspaceCopierVDFQuery to ghoWorkspaceCopier
+
+Use WorkspaceCopier\oWorkspaceCopierPanel.dg // ghoWorkspaceCopier MUST be defined before including this
+
+Start_UI oWorkspaceCopierPanel

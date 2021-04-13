@@ -1,0 +1,377 @@
+Use VdfBase.pkg // DAW package. Provides low level support expected of all DF applications (windows and webapp)
+
+Use TableAccessFunctions.pkg
+Use IndexFunctions.pkg
+
+Struct _trbfRecordBuffer
+    Integer iTable
+    RowID rRowId
+End_Struct
+
+Struct tRBColumn
+    Integer iColumnID
+    String sColumnValue
+    Boolean bChanged
+End_Struct
+
+Struct tRecordBuffer
+    Integer iTable
+    String  sRowID
+    tRBColumn[] aColumns
+End_Struct
+
+Global_Variable Integer oRecordBufferFunctions
+_trbfRecordBuffer[] _gartbfBufferStates
+
+Object _oRecordBufferFunctions is a cObject
+    Move Self to oRecordBufferFunctions
+
+    Property _trbfRecordBuffer[] paRecordStack
+    Property Integer[] _paReadonlyShadowBuffers
+    
+    Procedure PushRecord Integer iTable
+        _trbfRecordBuffer strRB
+        _trbfRecordBuffer[] aRecordStack
+
+        Move iTable to strRB.iTable
+        Move (GetRowID(iTable)) to strRB.rRowId
+
+        Get paRecordStack to aRecordStack
+        Move strRB to aRecordStack[SizeOfArray(aRecordStack)]
+        Set paRecordStack to aRecordStack
+    End_Procedure
+
+        Procedure _PopRecord Integer iTable Boolean bRestoreBuffer
+            _trbfRecordBuffer strRB
+            _trbfRecordBuffer[] aRecordStack
+
+            Get paRecordStack to aRecordStack
+            Move (aRecordStack[SizeOfArray(aRecordStack)-1]) to strRB
+
+            If (strRB.iTable=iTable) Begin
+
+                Move (ResizeArray(aRecordStack,SizeOfArray(aRecordStack)-1)) to aRecordStack
+                Set paRecordStack to aRecordStack
+
+                If (bRestoreBuffer) Begin
+                    Clear iTable
+                    If (not(IsNullRowID(strRB.rRowId))) Begin
+                        If (FindByRowID(strRB.iTable,strRB.rRowId)) Begin
+                        End
+                    End
+                End
+            End
+            Else Begin
+                Error DFERR_PROGRAM "Un-balanced record buffer push/pop"
+            End
+        End_Procedure
+
+    Procedure PopRecord Integer iTable // iTable parameter is used to check for balanced use of record stack
+        Send _PopRecord iTable True
+    End_Procedure
+
+    Procedure DropRecord Integer iTable // iTable parameter is used to check for balanced use of record stack
+        Send _PopRecord iTable False
+    End_Procedure
+
+        Function _IsRecordBufferActive Integer iTable Returns Boolean
+            Integer iStatus
+            Get_Attribute DF_FILE_STATUS of iTable to iStatus
+            Function_Return (iStatus=DF_FILE_ACTIVE or iStatus=DF_FILE_ACTIVE_CHANGED)
+        End_Function
+
+        //> Inactivate buffer such that a saverecord on it will create a new record.
+        Procedure PrepareRecordBufferCopy Integer iTable
+            If (_IsRecordBufferActive(Self,iTable)) Begin
+                Set_Attribute DF_FILE_STATUS of iTable To DF_FILE_INACTIVE
+            End
+            Else Begin
+                Error DFERR_PROGRAM ("PrepareRecordBufferCopy: Table "+String(iTable)+" is not active and thus cannot be deactivated")
+            End
+        End_Procedure
+
+    Function IsNullRecordBuffer Integer iTable Returns Boolean
+        Function_Return (not(_IsRecordBufferActive(Self,iTable)))
+    End_Function
+
+    Function IsRecordBufferActive Integer iTable Returns Boolean
+        Function_Return (_IsRecordBufferActive(Self,iTable))
+    End_Function
+
+    Function RecordBufferColumnValues Integer iTable Returns String[]
+        Integer iColumn iColumns iColumnType
+        String[] aColumnValues
+        Get_Attribute DF_FILE_NUMBER_FIELDS of iTable to iColumns
+        For iColumn from 0 to iColumns
+            Get_Attribute DF_FIELD_TYPE of iTable iColumn to iColumnType
+            If (iColumnType<>DF_OVERLAP) Begin
+                Get_Field_Value iTable iColumn to aColumnValues[iColumn]
+            End
+            Else Begin
+                Move "" to aColumnValues[iColumn]
+            End
+        Loop
+        Function_Return aColumnValues
+    End_Function
+    
+    Procedure Set RecordBufferColumnValues Integer iTable String[] aColumnValues
+        Integer iColumn iColumns iColumnType
+        Get_Attribute DF_FILE_NUMBER_FIELDS of iTable to iColumns
+        For iColumn from 0 to iColumns
+            Get_Attribute DF_FIELD_TYPE of iTable iColumn to iColumnType
+            If (iColumnType<>DF_OVERLAP) Begin
+                Set_Field_Value iTable iColumn to aColumnValues[iColumn]
+            End
+        Loop
+    End_Procedure
+    
+    Function ColumnValueInStringArray String[] aColumnValues Integer iColumn Returns String
+        Function_Return aColumnValues[iColumn]
+    End_Function
+    
+    Procedure Set ColumnValueInStringArray String[] ByRef aColumnValues Integer iColumn String sValue
+        Move sValue to aColumnValues[iColumn]
+    End_Procedure
+
+// ******* RB functions **********************************************************************
+
+    Function _RBFindColumnIndex tRecordBuffer strRecord Integer iColumnID Returns Integer
+        Integer iIndex iMax
+        Move (SizeOfArray(strRecord.aColumns)-1) to iMax
+        For iIndex from 0 to iMax
+            If (iColumnID=strRecord.aColumns[iIndex].iColumnID) Begin
+                Function_Return iIndex
+            End
+        Loop
+        Function_Return -1
+    End_Function
+    
+    Procedure Set RBColumnValue tRecordBuffer ByRef strRecord Integer iColumnID String sColumnValue 
+        Integer iIndex
+        Get _RBFindColumnIndex strRecord iColumnID to iIndex
+        If (iIndex=-1) Begin
+            Move (SizeOfArray(strRecord.aColumns)) to iIndex
+            Move iColumnID to strRecord.aColumns[iIndex].iColumnID
+            Move False to strRecord.aColumns[iIndex].bChanged
+        End 
+        Else Begin
+            Move True to strRecord.aColumns[iIndex].bChanged
+        End
+        Move (Rtrim(sColumnValue)) to strRecord.aColumns[iIndex].sColumnValue
+    End_Procedure
+    
+    Function RBColumnValue tRecordBuffer strRecord Integer iColumnID Returns String
+        String sColumnValue
+        Integer iIndex
+        Get _RBFindColumnIndex strRecord iColumnID to iIndex
+        If (iIndex=-1) Begin
+            Move "" to sColumnValue
+        End
+        Else Begin
+            Move strRecord.aColumns[iIndex].sColumnValue to sColumnValue
+        End
+        Function_Return sColumnValue
+    End_Function
+    
+    Function RBNewBuffer Integer iTable Returns tRecordBuffer
+        tRecordBuffer stRecord
+        Move iTable to stRecord.iTable
+        Function_Return stRecord
+    End_Function
+    
+    Procedure RBClear tRecordBuffer ByRef stRecord
+        Move (ResizeArray(stRecord.aColumns,0)) to stRecord.aColumns
+    End_Procedure
+    
+    Function RBFind tRecordBuffer ByRef stRecord Integer iIndex Integer iMode Returns Boolean
+        Boolean bFound
+        Vfind stRecord.iTable iIndex iMode
+        Move (Found) to bFound
+        If (bFound) Begin
+            Get RBReadBuffer stRecord.iTable to stRecord
+        End
+        Function_Return bFound
+    End_Function
+             
+    Function RBReadBuffer Integer iTable Returns tRecordBuffer
+        Integer iColumnID iColumns iColumnType
+        RowID riRow
+        String sValue
+        tRecordBuffer strRecord
+        
+        Move iTable to strRecord.iTable
+        Move (GetRowID(iTable)) to riRow
+        If (not(IsNullRowID(riRow))) Begin
+            Move (SerializeRowID(riRow)) to strRecord.sRowID
+        End
+
+        Get_Attribute DF_FILE_NUMBER_FIELDS of strRecord.iTable to iColumns
+        For iColumnID from 1 to iColumns
+            Get_Attribute DF_FIELD_TYPE of iTable iColumnID to iColumnType
+            If (iColumnType<>DF_OVERLAP) Begin
+                Get_Field_Value iTable iColumnID to sValue
+                If (iColumnType=DF_ASCII) Begin
+                    Move (Rtrim(sValue)) to sValue
+                End
+                Set RBColumnValue (&strRecord) iColumnID to sValue
+            End
+        Loop
+        Function_Return strRecord
+    End_Function
+    
+    Procedure RBWriteBuffer tRecordBuffer strRecord
+        Integer iMax iIndex
+        Move (SizeOfArray(strRecord.aColumns)-1) to iMax
+        For iIndex from 0 to iMax
+            Set_Field_Value strRecord.iTable strRecord.aColumns[iIndex].iColumnID to strRecord.aColumns[iIndex].sColumnValue
+        Loop                                            
+    End_Procedure
+    
+    Procedure RBRefindRecordBuffer tRecordBuffer strRecord
+        Boolean bFound
+        RowID riRecord
+        Clear strRecord.iTable
+        If (strRecord.sRowID<>"") Begin
+            Move (DeserializeRowID(strRecord.sRowID)) to riRecord
+            If (not(IsNullRowID(riRecord))) Begin
+                Move (FindByRowID(strRecord.iTable,riRecord)) to bFound
+            End
+        End
+    End_Procedure
+    
+    Function RBColumnHasValue tRecordBuffer strRecord Integer iColumnID Returns Boolean
+        Function_Return (_RBFindColumnIndex(Self,strRecord,iColumnID)<>-1)
+    End_Function
+    
+    Procedure RBRemoveColumnValue tRecordBuffer ByRef strRecord Integer iColumnID
+        Integer iIndex
+        Get _RBFindColumnIndex strRecord iColumnID to iIndex
+        If (iIndex<>-1) Begin
+            Move (RemoveFromArray(strRecord.aColumns,iIndex)) to strRecord.aColumns
+        End
+    End_Procedure
+
+    Function _ReadonlyShadowTable Integer iTable Boolean bCreate Returns Integer
+        Integer iShadowTable iAliasMode
+        Integer[] aShadowBuffers
+        String sRoot
+        Move 0 to iShadowTable
+        Get _paReadonlyShadowBuffers to aShadowBuffers
+        If (iTable<SizeOfArray(aShadowBuffers)) Begin
+            Move aShadowBuffers[iTable] to iShadowTable
+        End
+        If (bCreate and iShadowTable=0) Begin
+            If (IsOpen(oTableAccessFunctions,iTable)) Begin
+                Get_Attribute DF_FILE_ROOT_NAME of iTable to sRoot
+                Get OpenTableAsAutoHandle of oTableAccessFunctions sRoot DF_SHARE 0 to iShadowTable
+                If (iShadowTable>0) Begin
+                    Get_Attribute DF_FILE_ALIAS of iTable to iAliasMode
+                    If (iAliasMode=DF_FILE_ALIAS_DEFAULT) Begin // If already set, do nothing
+                        Set_Attribute DF_FILE_ALIAS of iTable to DF_FILE_IS_MASTER
+                    End
+                    Set_Attribute DF_FILE_ALIAS of iShadowTable to DF_FILE_IS_ALIAS
+                    Set_Attribute DF_FILE_MODE of iShadowTable to DF_FILEMODE_READONLY
+                    Move iShadowTable to aShadowBuffers[iTable]
+                    Set _paReadonlyShadowBuffers to aShadowBuffers
+                End
+            End
+            Else Begin
+                Error 392 "You can not aquire a shadow-buffer unless the 'real' table is already open"
+            End
+        End
+        Function_Return iShadowTable
+    End_Function
+    
+//    //> Returns an empty buffer 
+//    Function ReadonlyShadowBuffer Integer iTable Returns tRecordBuffer
+//        tRecordBuffer stShadow
+//        Get _ReadonlyShadowTable iTable True to stShadow.iTable
+//        Function_Return stShadow
+//    End_Function
+
+    Function ShadowBufferRead Integer iTable Returns tRecordBuffer
+        Integer iShadowTable
+        tRecordBuffer stBuffer
+        Get ShadowTableNumber iTable to iShadowTable
+        Get RBReadBuffer iShadowTable to stBuffer
+        Move iTable to stBuffer.iTable
+        Function_Return stBuffer
+    End_Function
+    
+    Function ShadowTableNumber Integer iTable Returns Integer
+        Integer iShadowTable
+        Get _ReadonlyShadowTable iTable True to iShadowTable
+        Function_Return iShadowTable
+    End_Function
+    
+    Procedure ShadowBufferOpen Integer iTable
+        tRecordBuffer stShadow
+        Get _ReadonlyShadowTable iTable True to stShadow.iTable
+    End_Procedure
+
+    Procedure ShadowBufferClose Integer iTable
+        Integer iShadowTable
+        Integer[] aShadowBuffers
+        Get _ReadonlyShadowTable iTable False to iShadowTable
+        Close iShadowTable
+        Get _paReadonlyShadowBuffers to aShadowBuffers
+        Move 0 to aShadowBuffers[iTable]
+        Set _paReadonlyShadowBuffers to aShadowBuffers
+    End_Procedure
+    
+    Function ShadowBufferFindHighestRecordID Integer iTable Integer iColumn Returns Number
+        Integer iShadowTable iIndex iSegments
+        Number nValue
+        Get _ReadonlyShadowTable iTable True to iShadowTable
+        Get_Attribute DF_FIELD_INDEX of iTable iColumn to iIndex
+        Get_Attribute DF_INDEX_NUMBER_SEGMENTS of iTable iIndex to iSegments
+        If (iSegments=1) Begin
+            Clear iShadowTable
+            Send SeedMinValue of oIndexFunctions iShadowTable iColumn True
+            Vfind iShadowTable iIndex LE
+            If (Found) Begin
+                Get_Field_Value iShadowTable iColumn to nValue
+                Function_Return nValue    
+            End
+        End
+        Else Begin
+            Error 393 ("Can not find by field "+String(iTable)+"."+String(iColumn))
+        End
+        Function_Return 0
+    End_Function
+    
+    Function ShadowBufferFindByRowID Integer iTable RowID riRow Returns tRecordBuffer
+        Integer iShadowTable
+        tRecordBuffer stShadow
+        Get _ReadonlyShadowTable iTable True to iShadowTable
+        If (FindByRowID(iShadowTable,riRow)) Begin
+            Get RBReadBuffer iShadowTable to stShadow
+        End 
+        Function_Return stShadow
+    End_Function
+    
+    Function ShadowBufferColumnValue Integer iTable Integer iColumn Returns String
+        String sValue
+        Get ShadowTableNumber iTable to iTable
+        Get_Field_Value iTable iColumn to sValue
+        Function_Return sValue
+    End_Function
+    
+    Procedure Set ShadowBufferColumnValue Integer iTable Integer iColumn String sValue
+        Get ShadowTableNumber iTable to iTable
+        Set_Field_Value iTable iColumn to sValue
+    End_Procedure
+End_Object
+
+//Struct tawRecordBufferRecursive
+//    tRecordBuffer stBuffer
+//    tawRecordBufferRecursive aChildren
+//End_Struct
+//
+//Use TableQueryStructureFunctions.pkg
+//Global_Variable Integer oRecordBufferRecursiveFunctions
+//
+//Object _oRecordBufferRecursiveFunctions is a cObject
+//    Move Self to oRecordBufferRecursiveFunctions
+//    
+//End_Object

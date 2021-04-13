@@ -1,0 +1,108 @@
+﻿Use Windows.pkg
+Use cHtmlHelp.pkg
+Use cApplication.pkg
+Use cConnection.pkg
+
+Object oHtmlHelp is a cHtmlHelp
+End_Object
+
+Object oApplication is a cApplication
+
+    Object oConnection is a cConnection
+        Use LoginEncryption.pkg
+        Use DatabaseLoginDialog.dg
+    End_Object
+
+End_Object
+
+Use WinUuid.pkg
+Use StringFunctions.pkg
+Use FileFunctions.pkg
+
+Object oTestFileFunctions is a cObject
+    
+    Procedure RunCopyTest
+        Integer iCh 
+        Integer iCount
+        Boolean bOk
+        Boolean bSuccess
+        number nSize
+        String sFolder
+        String sSourceFile
+        String sTargetFile
+        String sBlock
+        
+        Move False to bSuccess
+
+        // Random file names
+        Move (RandomHexUUID()) to sSourceFile
+        Move (RandomHexUUID()) to sTargetFile
+        
+        // Find work folder (data folder)
+        Get VdfFolderPath of oFileFunctions VDF_FILELIST to sFolder
+        Get AppendPath of oFileFunctions sFolder sSourceFile to sSourceFile
+        Get AppendPath of oFileFunctions sFolder sTargetFile to sTargetFile
+        
+        Move (Repeat(Character(170)+Character(55),128)) to sBlock
+        
+
+        Showln "Generating test file: " sSourceFile
+        // Generate example file to be copied
+        Get DirectOutput of oFileFunctions sSourceFile to iCh
+        If (iCh>=0) Begin
+            
+            For iCount from 1 to 100000 // Write 256 bytes one hundred thousand times (that is 25 MB)
+                Write channel iCh sBlock
+            Loop
+            Send CloseOutput of oFileFunctions iCh
+            
+            Get FileSizeBytes of oFileFunctions sSourceFile to nSize
+            Showln "File size: " (NumberToStringTS(oStringFunctions,nSize,0))
+            
+            If (CopyFileNew(oFileFunctions,sSourceFile,sTargetFile)) Begin
+                Showln 'File copied to "' sTargetFile '"'
+                
+                Show "Is source and target identical? "
+                Get AreFilesIdentical of oFileFunctions sSourceFile sTargetFile True to bOk
+                If (bOk) Begin
+                    Showln "YES"
+                    Move True to bSuccess
+                End
+                Else Begin
+                    Showln "NO"
+                End
+            End 
+            Else Begin
+                Showln 'Err: Could not copy "' sSourceFile '" to "' sTargetFile '"'
+            End
+        End
+        Else Begin
+            Showln "Not able to open output file"
+        End
+        
+        Get DeleteFileNew of oFileFunctions sSourceFile False to bOk
+        If (bOk) Begin
+            Showln '"' sSourceFile '" deleted'
+        End
+        Else Begin
+            Showln 'Err: "' sSourceFile '" could not be deleted (or found)!'
+        End
+        Get DeleteFileNew of oFileFunctions sTargetFile False to bOk
+        If (bOk) Begin
+            Showln '"' sTargetFile '" deleted'
+        End
+        Else Begin
+            Showln 'Err: "' sTargetFile '" could not be deleted (or found)!'
+        End
+        
+        If (bSuccess) Begin
+            Send Info_Box "Copying a 25MB file works just fine" "RunCopyTest"
+        End
+        Else Begin
+            Send Info_Box "Copying a 25MB file didn't work so fine" "RunCopyTest"
+        End
+    End_Procedure
+End_Object
+
+
+Send RunCopyTest of oTestFileFunctions

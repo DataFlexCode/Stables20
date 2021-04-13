@@ -1,0 +1,184 @@
+Use Windows.pkg
+Use DFClient.pkg
+Use DfTreeVw.pkg
+Use FileFunctions.pkg
+
+// Sprogstyring mangler:
+// Dokumentskabeloner
+// Document templates
+
+Object oAttachedDocumentFileSelector is a ModalPanel
+    Set Border_Style to Border_Thick
+    Set Size to 251 296
+    Set piMinSize to 135 296
+    Set Location to 10 6
+    On_Key kCancel Send close_panel
+    Set Locate_Mode to Center_On_Screen
+
+    
+    Property String _psRootFolder
+    Property String _psSelectedFile
+
+    Object oTreeView is a TreeView
+        Set Size to 214 113
+        Set Location to 16 4
+        Property String[] paFolders
+
+        Set peAnchors to anTopBottomLeft
+        
+        Function _AddFolderToArray String sFolder Returns Integer
+            Integer iIndex
+            String[] aFolders
+            Get paFolders to aFolders
+            Move (SizeOfArray(aFolders)) to iIndex
+            Move sFolder to aFolders[iIndex]
+            Set paFolders to aFolders
+            Function_Return iIndex
+        End_Function
+        
+        Function _Folder Integer iIndex Returns String
+            String[] aFolders
+            Get paFolders to aFolders
+            Function_Return aFolders[iIndex]
+        End_Function
+
+        Function CurrentFolder Returns String
+            Integer hItem iData
+            Get CurrentTreeItem to hItem
+            Get ItemData hItem to iData
+            Function_Return (_Folder(Self,iData))
+        End_Function
+        
+        Procedure _AddFolder Integer hParent String sFolder String sLabel
+            Integer iFolderIndex iMax iIndex hChild
+            String sSubfolder
+            tFileData[] aFileData
+            
+            Get _AddFolderToArray sFolder to iFolderIndex
+            Get AddTreeItem sLabel hparent iFolderIndex 0 0 to hChild
+            Send ReadFolder of oFileFunctions sFolder "*" (&aFileData) FF_FOLDER
+            Move (SizeOfArray(aFileData)-1) to iMax
+            For iIndex from 0 to iMax
+                Move aFileData[iIndex].sFileName to sSubfolder
+                If (Left(sSubfolder,1)<>".") Begin // This excludes . and .. as well as folders whise names starts with "." (such as .svg)
+                    Send _AddFolder hChild (AppendPath(oFileFunctions,sFolder,sSubfolder)) sSubfolder
+                End
+            Loop
+        End_Procedure
+
+        Procedure FillTree String sRootFolder
+            String sSubfolder
+            Get PathToFileName of oFileFunctions sRootFolder to sSubfolder
+            Send _AddFolder 0 sRootFolder sSubfolder // Templates
+        End_Procedure
+
+        Procedure OnCreateTree
+            String sRootFolder
+            String[] aEmpty
+
+            Set paFolders to aEmpty
+            Send DoDeleteItem (RootItem(Self))
+
+            Get _psRootFolder to sRootFolder
+
+            Send FillTree sRootFolder
+            Send DoExpandAll (RootItem(Self))
+        End_Procedure
+
+        Procedure OnItemChanged Handle hItem Handle hItemOld
+            String sFolder
+            Integer iFolderIndex
+            Get ItemData hItem to iFolderIndex
+            Get _Folder iFolderIndex to sFolder
+            Send FillList of oList sFolder
+        End_Procedure
+    End_Object
+
+    Object oList is a List
+        Set Size to 218 162
+        Set Location to 16 124
+        Set Select_Mode to Auto_Select
+        Set peAnchors to anAll
+        On_Key kenter Send DoSelectFile
+
+        Register_Procedure DoSelectFile
+
+        Procedure Mouse_Click Integer iWindowNumber Integer iPosition
+            Send DoSelectFile
+        End_Procedure
+
+        Procedure FillList String sFolder
+            Integer iMax iIndex
+            tFileData[] aFileData
+
+            Set Dynamic_Update_State to False
+            Send Delete_Data
+            Send ReadFolder of oFileFunctions sFolder "*" (&aFileData) FF_FILE
+
+            Move (SizeOfArray(aFileData)-1) to iMax
+            For iIndex from 0 to iMax
+                Send Add_Item MSG_DoSelectFile aFileData[iIndex].sFileName
+            Loop
+            
+            Set Dynamic_Update_State to True
+        End_Procedure
+
+        Function CurrentFile Returns String
+            String sFile sFolder
+            If (Item_Count(Self)) Begin
+                Get CurrentFolder of oTreeView to sFolder
+                Get value (Current_Item(Self)) to sFile
+                Function_Return (AppendPath(oFileFunctions,sFolder,sFile))
+            End
+            Function_Return ""
+        End_Function
+    End_Object
+
+    Procedure DoSelectFile
+        String sValue
+        Get CurrentFile of oList to sValue
+        Set _psSelectedFile to sValue
+        Set _pbOk to True
+        Send close_panel
+    End_Procedure
+
+    Object oButton1 is a Button
+        Set Location to 234 182
+        Set Label to "Ok"
+        Set peAnchors to anBottomRight
+        Procedure OnClick
+            Send DoSelectFile
+        End_Procedure
+    End_Object
+
+    Object oButton2 is a Button
+        Set Location to 234 237
+        Set Label to "Annuller"
+        Set peAnchors to anBottomRight
+        Procedure OnClick
+            Send Close_Panel
+        End_Procedure
+    End_Object
+
+    Property Boolean _pbOk
+
+    Function SelectFile String sCaption String sRootFolder Returns String
+        String sFile
+        Set label to sCaption
+        Set _pbOk to False
+        Set _psRootFolder to sRootFolder
+        If (FileExists(oFileFunctions,sRootFolder)<>2) Begin // If not folder
+            Send Info_Box ("Folder ikke fundet: "+sRootFolder) "Advarsel"
+        End
+        Send popup
+        If (_pbOk(Self)) Begin
+            Get _psSelectedFile to sFile
+        End
+        Else Begin
+            Move "" to sFile
+        End
+        Function_Return sFile
+    End_Function
+
+End_Object
+

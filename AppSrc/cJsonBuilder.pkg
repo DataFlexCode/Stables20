@@ -1,0 +1,444 @@
+//> Class camChartBuilder works like a cJsonObject (upon which it is
+//> based). Plus some more. (!)
+//> pkg.doc.end
+
+Use VdfBase.pkg
+Use cJsonObject.pkg
+
+//> cJsonBuilder is a cJsonObject and is used as such but it also enables building json documents in
+//> several levels without the need for "nested" cJsonObjects.
+//>
+//> It adds 3 methods
+//>
+//>  a)   Procedure ResetJsonBuilder
+//>
+//>       Should be sent always to initialize the builder mechanism. It resets the stack mechanism
+//>
+//>
+//>  b)   Procedure BeginJson Integer eJsonType // jsonTypeObject or jsonTypeArray
+//>
+//>       Call to push current state and start a new object or array
+//>
+//>
+//>  c)   Function EndJson Returns Integer
+//>
+//>       Returns current json handle and returns to previous state
+//>
+//>
+//> For example, to generate this json sub-sequence:
+//> <code>
+//>    "columnWidth": 0.5,
+//>    "valueAxis": {
+//>        "type": "date"
+//>    },
+//>    "brightnessStep": 10,
+//> </code>
+//> one may write:
+//> <code>
+//>    Send SetMemberValue "columnWidth" jsonTypeDouble 0.5
+//>
+//>    Send BeginJson jsonTypeObject // push json and init new
+//>        Send SetMemberValue "type" jsonTypeString "date"
+//>    Send SetMember "valueAxis" (EndJson(Self)) // pop json and add to parent
+//>
+//>    Send SetMemberValue "brightnessStep" jsonTypeInteger 10
+//> </code>
+//>
+//>
+//> An example from some amCharts generating code:
+//>
+//> <code>
+//>   Send ResetJsonBuilder // <-- reset the json stack
+//>
+//>   Send BeginJson jsonTypeArray //  <-- begin json array
+//>
+//>       If (SizeOfArray(stGraphdata.aData)>0) Begin
+//>           Move (SizeOfArray(stGraphdata.aData[0].aAtomData)-1) to iAtomMax
+//>           Move (SizeOfArray(stGraphdata.aDimColumns)-1) to iDimMax
+//>           Move (SizeOfArray(stGraphdata.aFactColumns)-1) to iFactMax
+//>
+//>           For iAtomItem from 0 to iAtomMax
+//>               Move stGraphdata.aData[0].aAtomData[iAtomItem] to stAtom
+//>               Send BeginJson jsonTypeObject // <-- begin new json
+//>                   For iDimItem from 0 to iDimMax
+//>                       Send SetMemberValue stGraphdata.aDimColumns[iDimItem].sRefName ;
+//>                                             jsonTypeString stAtom.aDims[iDimItem]
+//>                   Loop
+//>                   For iFactItem from 0 to iFactMax
+//>                       Send SetMemberValue stGraphdata.aFactColumns[iFactItem].sRefName ;
+//>                                             jsonTypeDouble stAtom.aFacts[iFactItem]
+//>                   Loop
+//>               Send SetMember (String(MemberCount(Self))) (EndJson(Self)) // <-- end json and add to array
+//>           Loop
+//>       End
+//>
+//>   Send SetMember "data" (EndJson(Self)) // <-- end json and add as "data" member to original object
+//> </code>
+//>
+//>
+//>
+//>
+//>
+Class cJsonBuilder is a cJsonObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property Integer[] _paJsonStack
+        Property Integer   _piStackPointer -1
+    End_Procedure
+
+    //> BeginJson initiates a new json-object by pushing the current document on an internal stack.
+    //> stack.
+    Procedure BeginJson Integer eJsonType // jsonTypeObject or jsonTypeArray or other type
+        Integer[] aJsonStack
+        Integer   iStackPointer
+        Integer   hoJson
+        
+        Get _paJsonStack    to aJsonStack
+        Get _piStackPointer to iStackPointer
+        Increment iStackPointer
+        
+        If (iStackPointer=(SizeOfArray(aJsonStack))) Begin
+            Get Create (RefClass(cJsonObject)) to hoJson
+            Move hoJson to aJsonStack[iStackPointer]
+            Set _paJsonStack to aJsonStack
+        End
+        Else Begin
+            Move aJsonStack[iStackPointer] to hoJson
+        End
+
+        Set _piStackPointer to iStackPointer
+        Send InitializeJsonType of hoJson eJsonType // jsonTypeObject
+    End_Procedure
+
+    //> EndJson will return a handle to the JSON that was created since the most recent BeginJson call.
+    //> The handle returned must be dealt with immediately since subsequent calls to BeginJson will
+    //> redefine the json content of the handle (they are reused).
+    Function EndJson Returns Integer
+        Integer[] aJsonStack
+        Integer   iStackPointer
+        Integer hoJson
+        Get _paJsonStack    to aJsonStack
+        Get _piStackPointer to iStackPointer
+        If (iStackPointer>=0) Begin
+            Move aJsonStack[iStackPointer] to hoJson
+            Decrement iStackPointer
+            Set _piStackPointer to iStackPointer
+        End
+        Else Begin
+            Error DFERR_PROGRAM "JsonBuilder can't pop off empty stack"
+        End
+        Function_Return hoJson
+    End_Function
+
+    //> Cleans up after previous use. Should be sent always to initialize
+    //> the builder mechanism.
+    Procedure ResetJsonBuilder
+        Integer iItem iMax
+        Integer[] aJsonStack
+        Get _paJsonStack to aJsonStack
+        Move (SizeOfArray(aJsonStack)-1) to iMax
+        For iItem from 0 to iMax
+            Send Destroy of aJsonStack[iItem]
+        Loop
+        Set _paJsonStack to (ResizeArray(aJsonStack,0))
+        Set _piStackPointer to -1
+        Send InitializeJsonType jsonTypeObject
+    End_Procedure
+
+    //> Not much reason to call this (except if sub-sequently you want to call
+    //> (un-augmented) method JsonToDataType or DataTypeToJson).
+    Function CurrentJsonHandle Returns Integer
+        Integer[] aJsonStack
+        Integer   iStackPointer
+        Integer hoJson
+        Get _piStackPointer to iStackPointer
+        If (iStackPointer=-1) Begin
+            Function_Return Self
+        End
+        Get _paJsonStack to aJsonStack
+        Function_Return aJsonStack[iStackPointer]
+    End_Function
+    
+// Below this is a mindless repetition of all cJsonObject methods and properties:
+    Procedure AddMember Handle hoJsonObj // Appends an initialized JSON object to an array
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send AddMember hoJsonObj
+        End
+        Else Begin
+            Send AddMember of hoTarget hoJsonObj
+        End
+    End_Procedure
+    Procedure AddMemberValue Integer eJsonType String sValue // Appends a simple value to an array
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send AddMemberValue eJsonType sValue
+        End
+        Else Begin
+            Send AddMemberValue of hoTarget eJsonType sValue
+        End
+    End_Procedure
+    // DataTypeToJson is NOT included because we can't redirect the call (because of 'struct data'). Calling this
+    // therefore only makes sense when the stack is empty.
+//    Procedure DataTypeToJson Struct data // Converts a native DataFlex variable (usually a struct / array) into a JSON object structure representing that data
+//        Integer hoTarget
+//        Get CurrentJsonHandle to hoTarget
+//        If (hoTarget=Self) Begin
+//            Forward Send DataTypeToJson data
+//        End
+//        Else Begin
+//            Send DataTypeToJson of hoTarget data
+//        End
+//    End_Procedure
+    Function HasMember String sMember Returns Boolean // Checks if a member exists based on the passed member name (or array index)
+        Boolean bRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get HasMember sMember to bRval
+        End
+        Else Begin
+            Get HasMember of hoTarget sMember to bRval
+        End
+        Function_Return bRval
+    End_Function
+    Procedure InitializeJsonType Integer eType // Initializes the JSON object as a specific type
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send InitializeJsonType eType
+        End
+        Else Begin
+            Send InitializeJsonType of hoTarget eType
+        End
+    End_Procedure
+    Function IsMemberOfJsonType String sMember Integer eType Returns Boolean // Checks JSON type of a specific member of an array or object against the passed type
+        Boolean bRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get IsMemberOfJsonType sMember eType to bRval
+        End
+        Else Begin
+            Get IsMemberOfJsonType of hoTarget sMember eType to bRval
+        End
+        Function_Return bRval
+    End_Function
+    Function IsOfJsonType Integer eType Returns Boolean // Determines if the object is of a specific type
+        Boolean bRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get IsOfJsonType eType to bRval
+        End
+        Else Begin
+            Get IsOfJsonType of hoTarget eType to bRval
+        End
+        Function_Return bRval
+    End_Function
+    
+    // JsonToDataType is NOT included because we can't redirect the call (because of 'returns struct'). Calling this
+    // therefore only makes sense when the stack is empty.
+//    Function JsonToDataType Returns Struct // Converts a JSON object structure into a native DataFlex variable (usually a struct / array)
+//        Integer hoTarget
+//        Get CurrentJsonHandle to hoTarget
+//        If (hoTarget=Self) Begin
+//            Forward Send AddMember hoJsonObj
+//        End
+//        Else Begin
+//            Send AddMember of hoTarget hoJsonObj
+//        End
+//    End_Function
+
+    Function JsonType Returns Integer // Returns the type of the object as an integer constant
+        Integer iRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get JsonType to iRval
+        End
+        Else Begin
+            Get JsonType of hoTarget to iRval
+        End
+        Function_Return iRval
+    End_Function
+    Function Member String sMember Returns Handle // Gets a member of the JSON object by its name or array index
+        Handle hRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get Member sMember to hRval
+        End
+        Else Begin
+            Get Member of hoTarget sMember to hRval
+        End
+        Function_Return hRval
+    End_Function
+    Function MemberByIndex Integer iIndex Returns Handle // Get a member object its index. Can be used for enumerating object properties and to access array items.
+        Handle hRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get MemberByIndex iIndex to hRval
+        End
+        Else Begin
+            Get MemberByIndex of hoTarget iIndex to hRval
+        End
+        Function_Return hRval
+    End_Function
+    Function MemberCount Returns Integer // Returns the number of members of an array or an object
+        Integer iRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get MemberCount to iRval
+        End
+        Else Begin
+            Get MemberCount of hoTarget to iRval
+        End
+        Function_Return iRval
+    End_Function
+    Function MemberJsonType String sMember Returns Integer // Determines the JSON type of a specific member of an array or object
+        Integer iRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get MemberJsonType sMember to iRval
+        End
+        Else Begin
+            Get MemberJsonType of hoTarget sMember to iRval
+        End
+        Function_Return iRval
+    End_Function
+    Function MemberNameByIndex Integer iIndex Returns String // Gets the name of an object member by its index. Used for enumerating members of a JSON object.
+        String sRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get MemberNameByIndex iIndex to sRval
+        End
+        Else Begin
+            Get MemberNameByIndex of hoTarget iIndex to sRval
+        End
+        Function_Return sRval
+    End_Function
+    Function MemberValue String sMember Returns String // Returns the value of a member of the JSON object
+        String sRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get MemberValue sMember to sRval
+        End
+        Else Begin
+            Get MemberValue of hoTarget sMember to sRval
+        End
+        Function_Return sRval
+    End_Function
+    Function ParseString String sData Returns Boolean // Parses a string of JSON into a JSON object structure
+        Boolean bRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get ParseString sData to bRval
+        End
+        Else Begin
+            Get ParseString of hoTarget sData to bRval
+        End
+        Function_Return bRval
+    End_Function
+    Function ParseUtf8 UChar[] uData Returns Boolean // Parses a string of UTF-8 encoded data containing JSON into a JSON object structure
+        Boolean bRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get ParseUtf8 uData to bRval
+        End
+        Else Begin
+            Get ParseUtf8 of hoTarget uData to bRval
+        End
+        Function_Return bRval
+    End_Function
+    Procedure RemoveMember String sMember // Removes a member from a JSON object or array
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send RemoveMember sMember
+        End
+        Else Begin
+            Send RemoveMember of hoTarget sMember
+        End
+    End_Procedure
+    Procedure ReportParseError // If ParseString or ParseUtf8 failed, calling this procedure will trigger an error with the proper description.
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send ReportParseError
+        End
+        Else Begin
+            Send ReportParseError of hoTarget 
+        End
+    End_Procedure
+    Procedure SetMember String sMember Handle hoJsonObj // Sets the member of an object or array to an initialized JSON object
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send SetMember sMember hoJsonObj
+        End
+        Else Begin
+            Send SetMember of hoTarget sMember hoJsonObj
+        End
+    End_Procedure
+    Procedure SetMemberValue String sMember Integer eJsonType String sValue // Sets the member of an object directly to a simple value
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Send SetMemberValue sMember eJsonType sValue
+        End
+        Else Begin
+            Send SetMemberValue of hoTarget sMember eJsonType sValue
+        End
+    End_Procedure
+    Function Stringify Returns String // Generates the JSON string for the object structure being represented by the JSON objects
+        String sRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get Stringify to sRval
+        End
+        Else Begin
+            Get Stringify of hoTarget to sRval
+        End
+        Function_Return sRval
+    End_Function
+    Function StringifyUtf8 Returns UChar[] // Generates the JSON string for the object structure being represented by the JSON objects
+        UChar[] ucRval
+        Integer hoTarget
+        Get CurrentJsonHandle to hoTarget
+        If (hoTarget=Self) Begin
+            Forward Get StringifyUtf8 to ucRval
+        End
+        Else Begin
+            Get StringifyUtf8 of hoTarget to ucRval
+        End
+        Function_Return ucRval
+    End_Function
+
+// Properties are properties of the ultimate parent json-object. Therefore
+// the augmentations below have been un-commented.
+
+//    Procedure Set JsonValue String sValue // Gets or Sets JSON Value
+//    Function JsonValue Returns String
+//    Procedure Set pbEscapeForwardSlash Boolean bState
+//    Function pbEscapeForwardSlash Returns Boolean
+//    Procedure Set pbRequireAllMembers Boolean bState // Determines if JsonToDataType will give errors if a struct member does not exist in the JSON structure
+//    Function pbRequireAllMembers Returns Boolean
+//    Procedure Set pbUseVariantMetaData Boolean bState // Determines how variants are serialized
+//    Function pbUseVariantMetaData Returns Boolean
+//    Procedure Set peWhitespace Integer iValue // Controls if/how whitespace is added to the generated JSON when calling the Stringify function
+//    Function peWhitespace Returns Integer
+//    Procedure Set psParseError String sValue // If ParseString or ParseUtf8 failed, this property contains the error description.
+//    Function psParseError Returns String
+
+End_Class

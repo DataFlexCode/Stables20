@@ -1,0 +1,2569 @@
+//> SourceCodeReaderFunctions.pkg defines the function ReadLibrary which is effectively
+//> the only method of real interest in this package.
+//>
+//> <code>
+//>   Use SourceCodeReaderFunctions.pkg // Define oSourceCodeReaderFunctions singleton object
+//>   Use FileFunctions.pkg // Define oFileFunctions singleton object
+//>
+//>   Procedure Test
+//>       tDFLibrary stLib
+//>       String sSourceFolder
+//>
+//>       Get VdfFolderPath of oFileFunctions VDF_APPSRC to sFolder // Get AppSrc folder of active workspace
+//>       If (sFolder<>"") Begin
+//>           Get ReadLibrary of oSourceCodeReaderFunctions sFolder False to stLib // <- this is the one of interest
+//>           -- put a breakpoint here to see what data was registered --
+//>       End
+//>       Else Begin
+//>           Error 666 "Workspace doesn't have an AppSrc folder"
+//>       End
+//>   End_Procedure
+//> </code>
+//>
+//> The function reads the packages in the folder passed and builds a representation of their
+//> content in a tDFLibrary type variable. It records objects and classes defined, the
+//> methods within them and their parameters, structs declared, commands defined, global
+//> variables. Character images, enumeration lists and constants in general, properties,
+//> use's and #includes, external functions and that's finally it.
+//>
+//> The scanning also picks up all comments preceeded by the magic code '//>' (also used
+//> at the beginning of this very line which turns it into 'documentation'). In FileFunctions.pkg
+//> for example all the comments preceeded by '//>' are attributed to the nearest item in
+//> downward direction. The tDFLibrary struct will contain all that documentation too.
+//>
+//> Check out the tDFLibrary struct type defined in this package to learn what is registered
+//> or use the debugger to inspect a tDFLibrary variable at runtime.
+//>
+//> Or use VDFXray ('R and D' menu item 'Generate workspace documentation') to display a
+//> tDFLibrary value in a TreeView object.
+//>
+//> Note that the tDFObject is recursively defined to allow the complete nesting of objects
+//> to be registered.
+//>
+//> Todo:
+//>   In procedures and functions "//>" type comments should be recorded together with the indentation
+//>   of the next source code line. This will allow for pseudo-code style documentation of algorithms.
+//>
+//> pkg.doc.end (this is a meta command that ends the documentation of the package itself)
+//
+//
+// Documentation logical hierarchy:
+//
+// Library                                           // List of packages
+//   * Packages                    Package           // .TXT + "Constants"+"Structs (#)"+"Global variables (#)"
+//       * Constants               Constant
+//       * EnumLists               EnumList
+//           * Constants           EnumConstant
+//       * Structs                 Struct
+//           * Struct members      StructMember
+//       * Global variables        GlobalVariable
+//       * Classes                 Class
+//           * Properties          ClassProperty
+//           * Methods             ClassMethod
+//               * Parameters      ClassMethodParam
+//       * Objects                 Object
+//           * Properties          ObjectProperty
+//           * Methods             ObjectMethod
+//               * Parameters      ObjectMethodParam
+//           * Child objects       ObjectChild
+//       * Commands                Command
+//       * Used packages           Use
+//
+//
+//
+//
+//
+//
+Use VdfBase.pkg             // DAW package. Provides low level support expected of all DF applications (windows and webapp)
+Use FileFunctions.pkg       // Define oFileFunctions object
+Use StringFunctions.pkg     // Define oStringFunctions object
+Use StackFunctions.pkg      // Define oStackFunctions object
+Use XmlBuilder.pkg
+
+#IFDEF Is$WebApp
+#ELSE
+Use VdfStudioFunctions.pkg  // Define oVdfStudioFunctions object
+#ENDIF
+Use NamedValueFunctions.pkg
+
+Struct tDFLocation
+    String sFileName
+    Integer iLineNo
+    tNamedValueList stMeta
+End_Struct
+
+//Struct tDFDocItem
+//    String sTag // "notag" "todo" "note"
+//    String sDoc
+//End_Struct
+//
+//Struct tDFDoc
+//    tDFDocItem[] aDocs
+//End_Struct
+
+Struct tDFCommand
+    String sName
+    String sDoc
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFGlobalVariable
+    String sType
+    String sName
+    String sDoc
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFConstant
+    String sName
+    String sValue
+    String sDoc
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFEnumList
+    String sName
+    String sDoc
+    tDFConstant[] aMembers
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFStructMember
+    String sType
+    String sName
+    String sDoc
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFStruct
+    String sName
+    String sDoc
+    tDFStructMember[] aMembers
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFParameter
+    String sType
+    String sName
+    Boolean bByRef
+    String sDoc
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFMethod
+    String sName
+    String sReturnType
+    String sDoc
+    tDFParameter[] aParameters
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFProperty
+    String sType
+    String sName
+    String sDoc
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFClass
+    String sName
+    String sSuperClass
+    String sDoc
+    tDFProperty[] aProperties
+    tDFMethod[] aMethods
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFObject
+    String sName
+    String sSuperClass
+    String sDoc
+    tDFProperty[] aProperties
+    tDFMethod[] aMethods
+    tDFObject[] aChildObjects
+    tDFLocation stLoc
+End_Struct
+
+Struct tDFPackage
+    String sName
+    String sDoc
+    tDFConstant[]       aConstants
+    tDFEnumList[]       aEnumLists
+    tDFStruct[]         aStructs
+    tDFGlobalVariable[] aGlobalVariables
+    tDFClass[]          aClasses
+    tDFObject[]         aObjects
+    tDFCommand[]        aCommands
+    String[]            aPackages
+End_Struct
+
+//Struct tDFPkgDoc
+//End_Struct
+
+Struct tDFLibrary
+    String sName
+    String sDoc
+    String sVer
+    Date dPublish
+    String sAuthor
+    String sAppSrcFolder
+    String sDDSrcFolder
+    tDFPackage[] aPackages
+    //tDFPkgDoc aExternalDoc
+End_Struct
+
+Struct tDFSrcObjectLabel
+    String sShortLabel
+    String sLongLabel
+End_Struct
+
+//> pkg.doc.feature 2012-10-26: Scanning of meta data {}
+//> Meta information indicated in {} brackets is now attached to items
+//> after the same rules that attaches documentation. Note that this is
+//> not necessarily in strict accordance with how the compiler understands
+//> things.
+//> pkg.doc.end
+
+
+//> Just some thoughts:
+
+//> pkg.doc.feature [major] 2012-06-28: <This is the headerline describing the feature>
+//> This new feature will make application building a lot easier in
+//> the future. Just think of ... bla bla bla.
+//> pkg.doc.end
+//>
+//> pkg.doc.todo [major] 2012-07-08: <This is the headerline for the todo>
+//> pkg.doc.end
+//>
+//> pkg.doc.change [major] 2012-07-08: <This is the headerline for the change>
+//> pkg.doc.end
+//>
+//> pkg.doc.begin <name of section>: <Headerline of the section>
+//> Sections of comments written between pkg.doc.begin and pkg.doc.end can
+//> be (and should be) referenced from from other sections of documentation.
+//> If the name is omitted the comments are attributed to the package itself.
+//> pkg.doc.end
+//>
+//> pkg.doc.insert [absolute] <name of section>
+//>
+//> pkg.author <name>[: contact info]              // (defaulted by PkgDocDefaults.ini)
+//>
+//> pkg.support-url <name of site>: <http://url>   // (defaulted by PkgDocDefaults.ini)
+//>
+//> pkg.prominence [experimental] <major | minor | ignore> // (this can be attributed at any level)
+//>
+//> pkg.symbol <symbol>: <value>
+//>
+//> pkg.escape-character <\>    // (defaulted by PkgDocDefaults.ini)
+//>
+//> pkg.doc.begin MarkUp: Mark up
+//> A number of tags can be used:
+//> <b> bold, <i> italics, <a href> link,
+//> pkg.doc.end
+//>
+//> pkg.doc.begin DocumentStructure: Document structure
+//> <%for all expr
+//> pkg.doc.end
+//>
+//>
+//>
+//> End thoughts
+
+//> This class may be used to traverse a tDFLibrary struct value. Each
+//> procedure should be augmented to handle the different parts of the
+//> struct. As a side bonus the tDFLibrary struct value may be modified
+//> as you go.
+
+Class cVdfLibraryTraverser is a cObject
+
+// Template:
+//    Procedure DoProperty tDFProperty ByRef stProperty String sId
+//        Forward Send DoProperty (&stProperty) sId
+//    End_Procedure
+//    Procedure DoParameter tDFParameter ByRef stParameter String sId
+//        Forward Send DoParameter (&stParameter) sId
+//    End_Procedure
+//    Procedure DoStructMember tDFStructMember ByRef stStructMember String sId
+//        Forward Send DoStructMember (&stStructMember) sId
+//    End_Procedure
+//    Procedure DoEnumListMember tDFConstant ByRef stEnumMember String sId
+//        Forward Send DoEnumListMember (&stEnumMember) sId
+//    End_Procedure
+//    Procedure DoCommand tDFCommand ByRef stCommand String sId
+//        Forward Send DoCommand (&stCommand) sId
+//    End_Procedure
+//    Procedure DoGlobalVariable tDFGlobalVariable ByRef stGlobalVariable String sId
+//        Forward Send DoGlobalVariable (&stGlobalVariable) sId
+//    End_Procedure
+//    Procedure DoConstant tDFConstant ByRef stConstant String sId
+//        Forward Send DoConstant (&stConstant) sId
+//    End_Procedure
+//    Procedure DoObject tDFObject ByRef stObject String sId
+//        Forward Send DoObject (&stObject) sId
+//    End_Procedure
+//    Procedure DoMethod tDFMethod ByRef stMethod String sId
+//        Forward Send DoMethod (&stMethod) sId
+//    End_Procedure
+//    Procedure DoClass tDFClass ByRef stClass String sId
+//        Forward Send DoClass (&stClass) sId
+//    End_Procedure
+//    Procedure DoStruct tDFStruct ByRef stStruct String sId
+//        Forward Send DoStruct (&stStruct) sId
+//    End_Procedure
+//    Procedure DoEnumList tDFEnumList ByRef stEnumList String sId
+//        Forward Send DoEnumList (&stEnumList) sId
+//    End_Procedure
+//    Procedure DoPackage tDFPackage ByRef stPackage String sId
+//        Forward Send DoPackage (&stPackage) sId
+//    End_Procedure
+//    Procedure DoLibrary tDFLibrary ByRef stLibrary
+//        Forward Send DoLibrary (&stLibrary)
+//    End_Procedure
+
+    Procedure DoProperty tDFProperty ByRef stProperty String sId
+    End_Procedure
+
+    Procedure DoParameter tDFParameter ByRef stParameter String sId
+    End_Procedure
+
+    Procedure DoStructMember tDFStructMember ByRef stStructMember String sId
+    End_Procedure
+
+    Procedure DoEnumListMember tDFConstant ByRef stEnumMember String sId
+    End_Procedure
+
+    Procedure DoCommand tDFCommand ByRef stCommand String sId
+    End_Procedure
+
+    Procedure DoGlobalVariable tDFGlobalVariable ByRef stGlobalVariable String sId
+    End_Procedure
+
+    Procedure DoConstant tDFConstant ByRef stConstant String sId
+    End_Procedure
+
+    Procedure OnObjectBeforeProperties tDFObject stObject
+    End_Procedure
+    Procedure OnObjectAfterProperties tDFObject stObject
+    End_Procedure
+
+    Procedure OnObjectBeforeMethods tDFObject stObject
+    End_Procedure
+    Procedure OnObjectAfterMethods tDFObject stObject
+    End_Procedure
+
+    Procedure OnObjectBeforeChildObjects tDFObject stObject
+    End_Procedure
+    Procedure OnObjectAfterChildObjects tDFObject stObject
+    End_Procedure
+
+    Procedure DoObject tDFObject ByRef stObject String sId
+        Integer iMax iItm
+        //Properties
+        Send OnObjectBeforeProperties stObject
+        Move (SizeOfArray(stObject.aProperties)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoProperty (&stObject.aProperties[iItm]) (sId+"/"+stObject.aProperties[iItm].sName)
+        Loop
+        Send OnObjectAfterProperties stObject
+        // Methods
+        Send OnObjectBeforeMethods stObject
+        Move (SizeOfArray(stObject.aMethods)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoMethod (&stObject.aMethods[iItm]) (sId+"/"+stObject.aMethods[iItm].sName)
+        Loop
+        Send OnObjectAfterMethods stObject
+        // Objects
+        Send OnObjectBeforeChildObjects stObject
+        Move (SizeOfArray(stObject.aChildObjects)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoObject (&stObject.aChildObjects[iItm]) (sId+"/"+stObject.aChildObjects[iItm].sName)
+        Loop
+        Send OnObjectAfterChildObjects stObject
+    End_Procedure
+
+    Procedure DoMethod tDFMethod ByRef stMethod String sId
+        Integer iMax iItm
+        Move (SizeOfArray(stMethod.aParameters)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoParameter (&stMethod.aParameters[iItm]) (sId+"/"+stMethod.aParameters[iItm].sName)
+        Loop
+    End_Procedure
+
+    Procedure OnClassBeforeProperties tDFClass stClass
+    End_Procedure
+    Procedure OnClassAfterProperties tDFClass stClass
+    End_Procedure
+
+    Procedure OnClassBeforeMethods tDFClass stClass
+    End_Procedure
+    Procedure OnClassAfterMethods tDFClass stClass
+    End_Procedure
+
+    Procedure DoClass tDFClass ByRef stClass String sId
+        Integer iMax iItm
+        //Properties
+        Send OnClassBeforeProperties stClass
+        Move (SizeOfArray(stClass.aProperties)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoProperty (&stClass.aProperties[iItm]) (sId+"/"+stClass.aProperties[iItm].sName)
+        Loop
+        Send OnClassAfterProperties stClass
+        // Methods
+        Send OnClassBeforeMethods stClass
+        Move (SizeOfArray(stClass.aMethods)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoMethod (&stClass.aMethods[iItm]) (sId+"/"+stClass.aMethods[iItm].sName)
+        Loop
+        Send OnClassAfterMethods stClass
+    End_Procedure
+
+    Procedure DoStruct tDFStruct ByRef stStruct String sId
+        Integer iMax iItm
+        Move (SizeOfArray(stStruct.aMembers)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoStructMember (&stStruct.aMembers[iItm]) (sId+"/"+stStruct.aMembers[iItm].sName)
+        Loop
+    End_Procedure
+
+    Procedure DoEnumList tDFEnumList ByRef stEnumList String sId
+        Integer iMax iItm
+        Move (SizeOfArray(stEnumList.aMembers)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoEnumListMember (&stEnumList.aMembers[iItm]) (sId+"/"+stEnumList.aMembers[iItm].sName)
+        Loop
+    End_Procedure
+
+    Procedure OnPackageBeforeConstants tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterConstants tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageBeforeEnumLists tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterEnumLists tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageBeforeGlobalVariables tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterGlobalVariables tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageBeforeCommands tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterCommands tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageBeforeStructs tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterStructs tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageBeforeClasses tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterClasses tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageBeforeObjects tDFPackage stPackage
+    End_Procedure
+    Procedure OnPackageAfterObjects tDFPackage stPackage
+    End_Procedure
+
+    Procedure DoPackage tDFPackage ByRef stPackage String sId
+        Integer iMax iItm
+
+        // Constants
+        Send OnPackageBeforeConstants stPackage
+        Move (SizeOfArray(stPackage.aConstants)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoConstant (&stPackage.aConstants[iItm]) (sId+"/"+stPackage.aConstants[iItm].sName)
+        Loop
+        Send OnPackageAfterConstants stPackage
+        // Enum lists
+        Send OnPackageBeforeEnumLists stPackage
+        Move (SizeOfArray(stPackage.aEnumLists)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoEnumList (&stPackage.aEnumLists[iItm]) (sId+"/"+stPackage.aEnumLists[iItm].sName)
+        Loop
+        Send OnPackageAfterEnumLists stPackage
+        // Global variables
+        Send OnPackageBeforeGlobalVariables stPackage
+        Move (SizeOfArray(stPackage.aGlobalVariables)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoGlobalVariable (&stPackage.aGlobalVariables[iItm]) (sId+"/"+stPackage.aGlobalVariables[iItm].sName)
+        Loop
+        Send OnPackageAfterGlobalVariables stPackage
+        // Commands
+        Send OnPackageBeforeCommands stPackage
+        Move (SizeOfArray(stPackage.aCommands)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoCommand (&stPackage.aCommands[iItm]) (sId+"/"+stPackage.aCommands[iItm].sName)
+        Loop
+        Send OnPackageAfterCommands stPackage
+        // Structs
+        Send OnPackageBeforeStructs stPackage
+        Move (SizeOfArray(stPackage.aStructs)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoStruct (&stPackage.aStructs[iItm]) (sId+"/"+stPackage.aStructs[iItm].sName)
+        Loop
+        Send OnPackageAfterStructs stPackage
+        // Classes
+        Send OnPackageBeforeClasses stPackage
+        Move (SizeOfArray(stPackage.aClasses)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoClass (&stPackage.aClasses[iItm]) (sId+"/"+stPackage.aClasses[iItm].sName)
+        Loop
+        Send OnPackageAfterClasses stPackage
+        // Objects
+        Send OnPackageBeforeObjects stPackage
+        Move (SizeOfArray(stPackage.aObjects)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoObject (&stPackage.aObjects[iItm]) (sId+"/"+stPackage.aObjects[iItm].sName)
+        Loop
+        Send OnPackageAfterObjects stPackage
+    End_Procedure
+
+    Procedure DoLibrary tDFLibrary ByRef stLibrary
+        Integer iItm iMax
+        Move (SizeOfArray(stLibrary.aPackages)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Send DoPackage (&stLibrary.aPackages[iItm]) (stLibrary.sName+"/"+stLibrary.aPackages[iItm].sName)
+        Loop
+    End_Procedure
+End_Class // cVdfLibraryTraverser
+
+
+Struct tDFSourceNode
+    Integer iNodeType   // SIT_*
+    String sId          // (applies to all node types)
+    String sName        // (all)
+    String sValue       // (constant (#replace or define..for))
+    String sValueType   // "integer", "date", "tTime" ... (globals, properties and method parameters)
+    Boolean bParamByRef // (method parameters)
+    String sDoc         // (all)
+    tDFLocation stLoc // (all)
+    tDFSourceNode[] aChildren
+
+//    Integer _iCompareCode // 0=identical  1=edited  2=children edited  3=inserted  4=deleted
+//    Integer _iDocCompareCode // 0=identical  1=edited  3=inserted  4=deleted
+End_Struct
+
+//Struct tDFSourceNodeCursor
+//    Integer[] aIndices
+//End_Struct
+
+Struct tDFSourceNodeSearch
+    Integer[] aRootCursor // Root of the search
+    Integer[] aNodeTypes  // SIT_* (empty array means all node types)
+    Integer iMinRecursion // Minimum depth
+    Integer iMaxRecursion // Maximum depth (999 for safe maximum)
+    String  sSearchPattern  // "*" means return regardless of content
+    Boolean bSearchNodeName // Search name the node?
+    Boolean bSearchDoc      // Search the doc content?
+    Boolean bSearchMeta     // Search meta parameter names {} (like "published" or "obsolete")
+End_Struct
+
+//Struct tDFSourceSearchResultNode
+//    tDFSourceNodeCursor strCursor
+//End_Struct
+
+Enum_List // Source code item types
+    Define SIT_LIBRARY       // Library
+    Define SIT_PACKAGE       // Description of the package itself
+    Define SIT_CLASS         // Class definition
+    Define SIT_COMMAND       // Command definition
+    Define SIT_CONSTANT      // Global symbol
+    Define SIT_GLOBALVAR     // Global variable
+    Define SIT_DD_CLASS      // DataDictionary Class
+    Define SIT_EFUNCTION     // External function
+    Define SIT_FUNCTION      // Function
+    Define SIT_IMAGE         // Image definition
+    Define SIT_INCLUDE       // #Include directive
+    Define SIT_OBJECT        // Object definition
+    Define SIT_PROCEDURE     // Procedure
+    Define SIT_PARAMETER     // Parameter
+    Define SIT_PROPERTY      // property
+    Define SIT_USE           // Use statement
+    Define SIT_IDXREF        // Index reference
+    Define SIT_FLDREF        // Field reference
+    Define SIT_STRUCT        // Struct definition
+    Define SIT_STRUCT_MEMBER // Struct member
+    Define SIT_ENUMLIST      // Enumeration list
+End_Enum_List
+
+Object oDfSourceNodeFunctions is a cObject
+
+    Function NodeTypeName Integer iNodeType Boolean bPluralis Returns String
+        If (bPluralis) Begin
+            If (iNodeType=SIT_LIBRARY)        ;
+                    Function_Return "Libraries"
+            Else If (iNodeType=SIT_PACKAGE)   ;
+                    Function_Return "Packages"
+            Else If (iNodeType=SIT_CLASS)     ;
+                    Function_Return "Classes"
+            Else If (iNodeType=SIT_COMMAND)   ;
+                    Function_Return "Commands"
+            Else If (iNodeType=SIT_CONSTANT)  ;
+                    Function_Return "Constants"
+            Else If (iNodeType=SIT_GLOBALVAR) ;
+                    Function_Return "Global variables"
+            Else If (iNodeType=SIT_DD_CLASS)  ;
+                    Function_Return "DD classes"
+            Else If (iNodeType=SIT_EFUNCTION) ;
+                    Function_Return "External functions"
+            Else If (iNodeType=SIT_FUNCTION)  ;
+                    Function_Return "Methods"
+            Else If (iNodeType=SIT_IMAGE)     ;
+                    Function_Return "Images"
+            Else If (iNodeType=SIT_INCLUDE)   ;
+                    Function_Return "Includes"
+            Else If (iNodeType=SIT_OBJECT)    ;
+                    Function_Return "Objects"
+            Else If (iNodeType=SIT_PROCEDURE) ;
+                    Function_Return "Methods"
+            Else If (iNodeType=SIT_PROPERTY)  ;
+                    Function_Return "Properties"
+            Else If (iNodeType=SIT_USE)       ;
+                    Function_Return "Uses"
+            Else If (iNodeType=SIT_STRUCT)    ;
+                    Function_Return "Structs"
+            Else If (iNodeType=SIT_STRUCT_MEMBER) ;
+                    Function_Return "Member"
+            Else If (iNodeType=SIT_ENUMLIST)  ;
+                    Function_Return "Enumeration lists"
+            Else If (iNodeType=SIT_PARAMETER) ;
+                    Function_Return "Parameters"
+        End
+        Else Begin
+            If (iNodeType=SIT_LIBRARY)        ;
+                    Function_Return "Library"
+            Else If (iNodeType=SIT_PACKAGE)   ;
+                    Function_Return "Package"
+            Else If (iNodeType=SIT_CLASS)     ;
+                    Function_Return "Class"
+            Else If (iNodeType=SIT_COMMAND)   ;
+                    Function_Return "Command"
+            Else If (iNodeType=SIT_CONSTANT)  ;
+                    Function_Return "Constant"
+            Else If (iNodeType=SIT_GLOBALVAR) ;
+                    Function_Return "Global variable"
+            Else If (iNodeType=SIT_DD_CLASS)  ;
+                    Function_Return "DD class"
+            Else If (iNodeType=SIT_EFUNCTION) ;
+                    Function_Return "External function"
+            Else If (iNodeType=SIT_FUNCTION)  ;
+                    Function_Return "Function"
+            Else If (iNodeType=SIT_IMAGE)     ;
+                    Function_Return "Image"
+            Else If (iNodeType=SIT_INCLUDE)   ;
+                    Function_Return "Include"
+            Else If (iNodeType=SIT_OBJECT)    ;
+                    Function_Return "Object"
+            Else If (iNodeType=SIT_PROCEDURE) ;
+                    Function_Return "Procedure"
+            Else If (iNodeType=SIT_PROPERTY)  ;
+                    Function_Return "Property"
+            Else If (iNodeType=SIT_USE)       ;
+                    Function_Return "Use"
+            Else If (iNodeType=SIT_STRUCT)    ;
+                    Function_Return "Struct"
+            Else If (iNodeType=SIT_STRUCT_MEMBER) ;
+                    Function_Return "Member"
+            Else If (iNodeType=SIT_ENUMLIST)  ;
+                    Function_Return "Enumeration list"
+            Else If (iNodeType=SIT_PARAMETER) ;
+                    Function_Return "Parameter"
+        End
+        Function_Return ("Unknown node-type: "+String(iNodeType))
+    End_Function
+
+    Function NodeTitle Integer iNodeType String sName Boolean bLowercaseType Boolean bTypeSecondary Returns String
+        String sNodeTypeName
+        Get NodeTypeName iNodeType False to sNodeTypeName
+        If (bLowercaseType) Begin
+            Move (Lowercase(sNodeTypeName)) to sNodeTypeName
+        End
+        If (bTypeSecondary) Begin
+            Function_Return (sName+" ("+sNodeTypeName+")")
+        End
+        Else Begin
+            Function_Return (sNodeTypeName+": "+sName)
+        End
+    End_Function
+
+        Function _NodeRegeneratedDeclarationLineParameters tDFSourceNode stNode Returns String
+            Integer iMax iItem
+            String sValue
+            Move (SizeOfArray(stNode.aChildren)-1) to iMax
+            For iItem from 0 to iMax
+                If (iItem>0) Begin
+                    Move (sValue+" ") to sValue
+                End
+                Move (sValue+stNode.aChildren[iItem].sValueType+" ") to sValue
+                If (stNode.aChildren[iItem].bParamByRef) Begin
+                    Move (sValue+"ByRef ") to sValue
+                End
+                Move (sValue+stNode.aChildren[iItem].sName+" ") to sValue
+            Loop
+            Function_Return sValue
+        End_Function
+
+    Function NodeRegeneratedDeclarationLine tDFSourceNode stNode Returns String
+        String sDeclaration
+        If (stNode.sName<>"") Begin
+            If (stNode.iNodeType=SIT_CLASS)     Begin
+                Move ("Class "+stNode.sName+" is a "+stNode.sValueType) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_COMMAND)   Begin
+                Move ("#COMMAND "+stNode.sName) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_CONSTANT)  Begin
+    //            Function_Return "Constant"
+            End
+            Else If (stNode.iNodeType=SIT_GLOBALVAR) Begin
+                Move (stNode.sValueType+" "+stNode.sName) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_DD_CLASS)  Begin
+                Move ("Class "+stNode.sName+" is a "+stNode.sValueType) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_EFUNCTION) Begin
+                Move ("External_Function "+stNode.sName+" ") to sDeclaration
+                Move (sDeclaration+_NodeRegeneratedDeclarationLineParameters(Self,stNode)) to sDeclaration
+                Move (sDeclaration+" Returns "+stNode.sValueType) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_FUNCTION)  Begin
+                Move ("Function "+stNode.sName+" ") to sDeclaration
+                Move (sDeclaration+_NodeRegeneratedDeclarationLineParameters(Self,stNode)) to sDeclaration
+                Move (sDeclaration+" Returns "+stNode.sValueType) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_IMAGE)     Begin
+                Move ("/"+stNode.sName) to sDeclaration
+                Function_Return "Image"
+            End
+            Else If (stNode.iNodeType=SIT_INCLUDE)   Begin
+                Move ("#INCLUDE "+stNode.sName) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_OBJECT)    Begin
+                Move ("Object "+stNode.sName+" is a "+stNode.sValueType) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_PROCEDURE) Begin
+                Move ("Procedure "+stNode.sName+" ") to sDeclaration
+                Move (sDeclaration+_NodeRegeneratedDeclarationLineParameters(Self,stNode)) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_PROPERTY)  Begin
+                Move ("Property "+stNode.sValueType+" "+stNode.sName) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_USE)       Begin
+                Move ("Use "+stNode.sName) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_STRUCT)    Begin
+                Move ("Struct "+stNode.sName) to sDeclaration
+            End
+            Else If (stNode.iNodeType=SIT_ENUMLIST)  Begin
+                Move "" to sDeclaration
+            End
+        End
+        Function_Return sDeclaration
+    End_Function
+
+    Function NodeIsGrouperNode tDFSourceNode stNode Returns Boolean
+        Function_Return (stNode.sName="")
+    End_Function
+
+        Function _ToAbstractGrouper String sID Integer iNodeType Returns tDFSourceNode
+            tDFSourceNode stGrouper
+            Move iNodeType to stGrouper.iNodeType
+            Move (sId+"/"+String(iNodeType)) to stGrouper.sId
+//            Move (String(iNodeType)) to stGrouper.sName
+            Move "" to stGrouper.sName // Blank means: this is a grouper
+            Function_Return stGrouper
+        End_Function
+
+        Procedure ToAbstractProperty tDFProperty ByRef stProperty tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_PROPERTY to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stProperty.sName to stAbstractObject.sName
+            Move stProperty.sType to stAbstractObject.sValueType
+            Move stProperty.sDoc to stAbstractObject.sDoc
+            Move stProperty.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractParameter tDFParameter ByRef stParameter tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_PARAMETER to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stParameter.sName to stAbstractObject.sName
+            Move stParameter.sType to stAbstractObject.sValueType
+            Move stParameter.bByRef to stAbstractObject.bParamByRef
+            Move stParameter.sDoc to stAbstractObject.sDoc
+            Move stParameter.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractStructMember tDFStructMember ByRef stStructMember tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_STRUCT_MEMBER to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stStructMember.sName to stAbstractObject.sName
+            Move stStructMember.sType to stAbstractObject.sValueType
+            Move stStructMember.sDoc to stAbstractObject.sDoc
+            Move stStructMember.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractEnumListMember tDFConstant ByRef stEnumMember tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_CONSTANT to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stEnumMember.sName to stAbstractObject.sName
+            Move stEnumMember.sDoc to stAbstractObject.sDoc
+            Move stEnumMember.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractCommand tDFCommand ByRef stCommand tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_COMMAND to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stCommand.sName to stAbstractObject.sName
+            Move stCommand.sDoc to stAbstractObject.sDoc
+            Move stCommand.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractGlobalVariable tDFGlobalVariable ByRef stGlobalVariable tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_GLOBALVAR to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stGlobalVariable.sName to stAbstractObject.sName
+            Move stGlobalVariable.sType to stAbstractObject.sValueType
+            Move stGlobalVariable.sDoc to stAbstractObject.sDoc
+            Move stGlobalVariable.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractConstant tDFConstant ByRef stConstant tDFSourceNode ByRef stAbstractObject String sId
+            Move SIT_CONSTANT to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stConstant.sName to stAbstractObject.sName
+            Move stConstant.sValue to stAbstractObject.sValue
+            Move stConstant.sDoc to stAbstractObject.sDoc
+            Move stConstant.stLoc to stAbstractObject.stLoc
+        End_Procedure
+
+        Procedure ToAbstractObject tDFObject ByRef stObject tDFSourceNode ByRef stAbstractObject String sId
+            Boolean bFunction
+            Integer iMax iItm
+            tDFSourceNode strEmpty strGrouper
+            Move SIT_OBJECT to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stObject.sName to stAbstractObject.sName
+            Move stObject.sSuperClass to stAbstractObject.sValueType
+            Move stObject.sDoc to stAbstractObject.sDoc
+            Move stObject.stLoc to stAbstractObject.stLoc
+            
+            //Properties
+            Move (SizeOfArray(stObject.aProperties)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_PROPERTY to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractProperty (&stObject.aProperties[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/prop-"+stObject.aProperties[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Methods
+            Move (SizeOfArray(stObject.aMethods)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_PROCEDURE to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move (stObject.aMethods[iItm].sReturnType<>"") to bFunction
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractMethod (&stObject.aMethods[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+If(bFunction,"func-","proc-")+stObject.aMethods[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Objects
+            Move (SizeOfArray(stObject.aChildObjects)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_OBJECT to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractObject (&stObject.aChildObjects[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stObject.aChildObjects[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+        End_Procedure
+
+        Procedure ToAbstractMethod tDFMethod ByRef stMethod tDFSourceNode ByRef stAbstractObject String sId
+            Integer iMax iItm
+            tDFSourceNode strEmpty
+            Move (If(stMethod.sReturnType<>"",SIT_FUNCTION,SIT_PROCEDURE)) to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stMethod.sName to stAbstractObject.sName
+            Move stMethod.sDoc to stAbstractObject.sDoc
+            Move stMethod.stLoc to stAbstractObject.stLoc
+            Move stMethod.sReturnType to stAbstractObject.sValueType
+            Move (SizeOfArray(stMethod.aParameters)) to iMax
+            Decrement iMax
+            For iItm from 0 to iMax
+                Move strEmpty to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+                Send ToAbstractParameter (&stMethod.aParameters[iItm]) (&stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)-1]) (sId+"/"+stMethod.aParameters[iItm].sName)
+            Loop
+        End_Procedure
+    
+        Procedure ToAbstractClass tDFClass ByRef stClass tDFSourceNode ByRef stAbstractObject String sId
+            Boolean bFunction
+            Integer iMax iItm
+            tDFSourceNode strEmpty strGrouper
+            Move SIT_CLASS to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stClass.sName to stAbstractObject.sName
+            Move stClass.sSuperClass to stAbstractObject.sValueType
+            Move stClass.sDoc to stAbstractObject.sDoc
+            Move stClass.stLoc to stAbstractObject.stLoc
+
+            //Properties
+            Move (SizeOfArray(stClass.aProperties)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_PROPERTY to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractProperty (&stClass.aProperties[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/prop-"+stClass.aProperties[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+
+            // Methods
+            Move (SizeOfArray(stClass.aMethods)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_PROCEDURE to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move (stClass.aMethods[iItm].sReturnType<>"") to bFunction
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractMethod (&stClass.aMethods[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+If(bFunction,"func-","proc-")+stClass.aMethods[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+        End_Procedure
+
+        Procedure ToAbstractStruct tDFStruct ByRef stStruct tDFSourceNode ByRef stAbstractObject String sId
+            Integer iMax iItm
+            tDFSourceNode strEmpty
+            Move SIT_STRUCT to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stStruct.sName to stAbstractObject.sName
+            Move stStruct.sDoc to stAbstractObject.sDoc
+            Move stStruct.stLoc to stAbstractObject.stLoc
+            Move (SizeOfArray(stStruct.aMembers)) to iMax
+            Decrement iMax
+            For iItm from 0 to iMax
+                Move strEmpty to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+                Send ToAbstractStructMember (&stStruct.aMembers[iItm]) (&stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)-1]) (sId+"/"+stStruct.aMembers[iItm].sName)
+            Loop
+        End_Procedure
+    
+        Procedure ToAbstractEnumList tDFEnumList ByRef stEnumList tDFSourceNode ByRef stAbstractObject String sId
+            Integer iMax iItm
+            tDFSourceNode strEmpty
+            Move SIT_ENUMLIST to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stEnumList.sName to stAbstractObject.sName
+            Move stEnumList.sDoc to stAbstractObject.sDoc
+            Move stEnumList.stLoc to stAbstractObject.stLoc
+            Move (SizeOfArray(stEnumList.aMembers)) to iMax
+            Decrement iMax
+            For iItm from 0 to iMax
+                Move strEmpty to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+                Send ToAbstractEnumListMember (&stEnumList.aMembers[iItm]) (&stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)-1]) (sId+"/"+stEnumList.aMembers[iItm].sName)
+            Loop
+        End_Procedure
+        
+        Procedure ToAbstractPackage tDFPackage ByRef stPackage tDFSourceNode ByRef stAbstractObject String sId
+            Integer iMax iItm 
+            tDFSourceNode strEmpty strGrouper
+
+            Move SIT_PACKAGE to stAbstractObject.iNodeType
+            Move sId to stAbstractObject.sId
+            Move stPackage.sName to stAbstractObject.sName
+            Move stPackage.sDoc to stAbstractObject.sDoc
+
+            // Constants
+            Move (SizeOfArray(stPackage.aConstants)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_CONSTANT to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractConstant (&stPackage.aConstants[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aConstants[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Enum lists
+            Move (SizeOfArray(stPackage.aEnumLists)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_ENUMLIST to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractEnumList (&stPackage.aEnumLists[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aEnumLists[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+
+            // Global variables
+            Move (SizeOfArray(stPackage.aGlobalVariables)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_GLOBALVAR to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractGlobalVariable (&stPackage.aGlobalVariables[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aGlobalVariables[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Commands
+            Move (SizeOfArray(stPackage.aCommands)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_COMMAND to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractCommand (&stPackage.aCommands[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aCommands[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Structs
+            Move (SizeOfArray(stPackage.aStructs)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_STRUCT to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractStruct (&stPackage.aStructs[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aStructs[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Classes
+            Move (SizeOfArray(stPackage.aClasses)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_CLASS to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractClass (&stPackage.aClasses[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aClasses[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+            
+            // Objects
+            Move (SizeOfArray(stPackage.aObjects)) to iMax
+            If (iMax>0) Begin
+                Get _ToAbstractGrouper sId SIT_OBJECT to strGrouper
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move strEmpty to strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)]
+                    Send ToAbstractObject (&stPackage.aObjects[iItm]) (&strGrouper.aChildren[SizeOfArray(strGrouper.aChildren)-1]) (strGrouper.sId+"/"+stPackage.aObjects[iItm].sName)
+                Loop
+                Move strGrouper to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            End
+        End_Procedure
+
+    Procedure ToAbstractLibrary tDFLibrary ByRef stLibrary tDFSourceNode ByRef stAbstractObject 
+        Integer iItm iMax
+        tDFSourceNode strEmpty
+        Move strEmpty to stAbstractObject
+
+        Move SIT_LIBRARY to stAbstractObject.iNodeType
+        Move stLibrary.sName to stAbstractObject.sId
+        Move stLibrary.sName to stAbstractObject.sName
+        Move stLibrary.sDoc to stAbstractObject.sDoc
+
+        Move (SizeOfArray(stLibrary.aPackages)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Move strEmpty to stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)]
+            Send ToAbstractPackage (&stLibrary.aPackages[iItm]) (&stAbstractObject.aChildren[SizeOfArray(stAbstractObject.aChildren)-1]) (stLibrary.sName+"/"+stLibrary.aPackages[iItm].sName)
+        Loop
+    End_Procedure
+    
+//    Function SearchNodes tDFSourceNode strNode tDFSourceNodeSearch strSearch Returns tDFSourceNodeCursor[]
+//    End_Function
+//
+//    Function CursorTrimToNearestNodeOfType tDFSourceNode strNode tDFSourceNodeCursor strCursor Integer iNodeType Returns tDFSourceNodeCursor
+//    End_Function
+//
+//    Function CursorsRemoveDublettes tDFSourceNode stNode tDFSourceNodeCursor[] aCursors Returns tDFSourceNodeCursor[]
+//    End_Function
+//
+//    Procedure CursorsSort tDFSourceNode stNode tDFSourceNodeCursor[] ByRef aCursors Integer iBy
+//    End_Procedure
+//
+//    Function CursorsUnion tDFSourceNodeCursor[] aCursorsA tDFSourceNodeCursor[] aCursorsB Returns tDFSourceNodeCursor[]
+//    End_Function
+//
+//    Function CursorsUnionIntersection tDFSourceNodeCursor[] aCursorsA tDFSourceNodeCursor[] aCursorsB Returns tDFSourceNodeCursor[]
+//    End_Function
+//
+//    Function CursorsUnionComplement tDFSourceNodeCursor[] aCursorsA tDFSourceNodeCursor[] aCursorsB Returns tDFSourceNodeCursor[]
+//    End_Function
+
+        Function _NodeIdCursor tDFSourceNode stNode String[] aValues Integer[] ByRef aNodeCursor Returns Boolean
+            Integer iIndex iMax
+            String sNodeID sNodeName
+            If (SizeOfArray(aValues)=0) Begin
+                Function_Return True
+            End
+            Else Begin
+                Move (SizeOfArray(stNode.aChildren)-1) to iMax
+                If (iMax>=0) Begin
+                    Move (lowercase(aValues[0])) to sNodeID
+                    For iIndex from 0 to iMax
+                        Move (Lowercase(stNode.aChildren[iIndex].sName)) to sNodeName
+                        If (sNodeName<>"" and stNode.aChildren[iIndex].iNodeType=SIT_PROPERTY)  ;
+                                Move ("prop-"+sNodeName) to sNodeName
+                        If (sNodeName<>"" and stNode.aChildren[iIndex].iNodeType=SIT_PROCEDURE) ;
+                                Move ("proc-"+sNodeName) to sNodeName
+                        If (sNodeName<>"" and stNode.aChildren[iIndex].iNodeType=SIT_FUNCTION)  ;
+                                Move ("func-"+sNodeName) to sNodeName
+                        If (sNodeID=sNodeName) Begin
+                            Move iIndex to aNodeCursor[SizeOfArray(aNodeCursor )]
+                            Function_Return (_NodeIdCursor(Self,stNode.aChildren[iIndex],RemoveFromArray(aValues,0),&aNodeCursor ))
+                        End
+                        Else If (sNodeName="") Begin
+                            // Check if grouper
+                            If (sNodeID=String(stNode.aChildren[iIndex].iNodeType)) Begin
+                                Move iIndex to aNodeCursor [SizeOfArray(aNodeCursor )]
+                                Function_Return (_NodeIdCursor(Self,stNode.aChildren[iIndex],RemoveFromArray(aValues,0),&aNodeCursor))
+                            End
+                        End
+                    Loop
+                End
+            End
+            Function_Return False
+        End_Function
+    
+    Function NodeIdCursor tDFSourceNode stRootNode String sNodeId Integer[] ByRef aNodeCursor  Returns Boolean
+        String[] aValues
+        Move (ResizeArray(aNodeCursor,0)) to aNodeCursor
+        Send SplitString of oStringFunctions sNodeId "/" False False (&aValues)
+        Function_Return (_NodeIdCursor(Self,stRootNode,aValues,&aNodeCursor))
+    End_Function
+    
+    Function NodeFromCursor tDFSourceNode stRootNode Integer[] aNodeCursor Returns tDFSourceNode
+        Integer iItem
+        If (SizeOfArray(aNodeCursor)=0) Begin
+            Function_Return stRootNode
+        End
+        Move aNodeCursor[0] to iItem
+        Move (RemoveFromArray(aNodeCursor,0)) to aNodeCursor
+        Function_Return (NodeFromCursor(Self,stRootNode.aChildren[iItem],aNodeCursor))
+    End_Function
+    
+//    Function CursorToNodeId tDFSourceNode stRootNode Integer[] aNodeCursor Returns String
+//        Integer iItem iMax
+//        String sNodeId
+//        tDFSourceNode stNode
+//        Move (SizeOfArray(aNodeCursor)-1) to iMax
+//        For iItem from 0 to iMax
+//            Get NodeFromCursor stRootNode (ResizeArray(aNodeCursor,iItem+1)) to stNode
+//        
+//        Loop
+//        Function_Return sNodeId
+//    End_Function
+End_Object // oVdfSourceNodeFunctions
+
+
+
+
+Define TYP.UNKNOWN for  0   // Argument types (UNKNOWN *must* be 0)
+//Define TYP.UNTYPED for  1
+//Define TYP.Integer for  2
+//Define TYP.Date    for  4
+//Define TYP.Number  for  8
+Define TYP.String  for 16
+//Define TYP.Boolean for 32
+
+Define CLS.UNKNOWN        for   0   // Argument classes (UNKNOWN *must* be 0)
+//Define CLS.LABEL          for   1
+//Define CLS.VAR            for   2
+Define CLS.CONST          for   4
+Define CLS.EXPR           for   8
+//Define CLS.KEYWORD        for  16
+//Define CLS.COMMAND        for  32
+//Define CLS.REPLACE_SYMBOL for  64
+//Define CLS.Field          for 128
+//Define CLS.Function       for 256
+
+Enum_List //> doc.name line read
+    Define DFSRC_END_OF_FILE
+    Define DFSRC_COMMAND_LINE
+    Define DFSRC_IMAGE_DEFINITION
+    Define DFSRC_END_IMAGE_DEFS
+    Define DFSRC_COMMENT_ONLY
+    Define DFSRC_COMMAND_DEF
+    Define DFSRC_ERROR_IMAGE
+    Define DFSRC_ERROR_COMMAND
+    Define DFSRC_META
+End_Enum_List
+
+//Struct tDFParameter
+//    String sType
+//    String sName
+//    Boolean bByRef
+//    String sDoc
+//    tDFLocation stLoc
+//End_Struct
+
+Object _oVdfSourceLineReader is a cObject
+    Property Integer piLinesRead       0
+    Property Integer piItemFoundInLine 0
+
+    Procedure SplitResultAndComment String sValue String ByRef sCommand String ByRef sComment
+        Integer iPos
+        Move (Pos("//",sValue)) to iPos
+        If (iPos<>0) Begin
+            Move (Rtrim(Left(sValue,iPos-1))) to sCommand
+            Move (Rtrim(Remove(sValue,1,iPos+1))) to sComment
+        End
+        Else Begin
+            Move (Rtrim(sValue)) to sCommand
+            Move "" to sComment
+        End
+    End_Procedure
+
+    Function Readln Integer iCh String ByRef sCommand String ByRef sComment String[] ByRef aParams Returns Integer
+        Integer iLines iRval
+        Boolean bStop bConcatenate bSeqEof
+        Boolean bFunctionProcedureOrExternalFunction bFirstIteration
+        String sValue sUcValue
+        String sTempCommand sTempComment
+        String[] aValues
+
+        Set piLinesRead to 0
+        Set piItemFoundInLine to 0
+
+
+        Move 0 to iLines
+        Move 0 to iRval
+        Move "" to sCommand
+        Move "" to sComment
+        Move (ResizeArray(aParams,0)) to aParams
+        Move False to bFunctionProcedureOrExternalFunction
+        Move True to bFirstIteration
+
+        Repeat // Skip empty lines
+            Readln channel iCh sValue
+            Increment iLines
+            If (SeqEof) Begin
+                Set piLinesRead to iLines
+                Set piItemFoundInLine to iLines
+                Function_Return DFSRC_END_OF_FILE
+            End
+        Until (sValue<>"")
+
+        Repeat // Read line (and concatenate with following lines (if ";")
+            Send SplitResultAndComment sValue (&sTempCommand) (&sTempComment)
+
+            If (sTempCommand<>"") Begin
+                Send SplitString of oStringFunctions sTempCommand " " True False (&aValues)
+                If (not(bConcatenate)) Begin
+                    Move ("|function|procedure|external_function32|" contains Lowercase(aValues[0])) to bFunctionProcedureOrExternalFunction
+                End
+            End
+
+
+            Move (Right(sTempCommand,1)=";") to bConcatenate
+            If (bConcatenate) Begin
+                Get rRemove of oStringFunctions sTempCommand 1 to sTempCommand
+            End
+
+            If (sTempCommand<>"") Begin
+                If (sCommand="") Begin
+                    Move sTempCommand to sCommand
+                End
+                Else Begin
+                    Move (sCommand*sTempCommand) to sCommand
+                End
+            End
+
+            If (bFirstIteration) Begin
+                Move sTempComment to sComment
+            End
+            Else Begin
+                If (bFunctionProcedureOrExternalFunction) Begin
+                    If (Left(sTempComment,1)=">") Begin
+                        Move (Trim(Replace(">",sTempComment,""))) to sTempComment
+                        Move sTempComment to aParams[SizeOfArray(aParams)]
+                    End
+                End
+                Else Begin
+                    If (sComment="") Begin
+                        Move sTempComment to sComment
+                    End
+                    Else Begin
+                        Move (sComment+Character(10)+sTempComment) to sComment
+                    End
+                End
+            End
+
+
+            If (bConcatenate) Begin
+                Readln channel iCh sValue
+                Increment iLines
+                If (SeqEof) Begin
+                    Set piLinesRead to iLines
+                    Function_Return DFSRC_END_OF_FILE
+                End
+            End
+            Move False to bFirstIteration
+        Until (not(bConcatenate))
+
+        Move (Trim(Uppercase(sCommand))) to sUcValue
+
+        If (Left(sUcValue,1)="{" and Right(sUcValue,1)="}") Begin
+            Set piLinesRead to iLines
+            Function_Return DFSRC_META
+        End
+        Else Begin
+            If (sCommand="") Begin // Comments only
+                Set piLinesRead to iLines
+                Set piItemFoundInLine to iLines
+                Function_Return DFSRC_COMMENT_ONLY
+            End
+            Else If (BeginsWith(oStringFunctions,sUcValue,"/")) Begin // Image definition
+                If (left(sUcValue,2)) eq "/*" Begin
+                    Set piLinesRead to iLines
+                    Function_Return DFSRC_END_IMAGE_DEFS
+                End
+                Move False to bStop
+                Set piItemFoundInLine to iLines
+                Repeat
+                    Move (ReadLnProbe(oFileFunctions,iCh)) to sValue
+                    If (BeginsWith(oStringFunctions,sValue,"/")) Begin
+                        Move True to bStop // New image definition
+                    End
+                    Else Begin
+                        Readln sValue
+                        Increment iLines
+                    End
+                    If (SeqEof) Begin
+                        Set piLinesRead to iLines
+                        Function_Return DFSRC_ERROR_IMAGE // Unfinished image definition
+                    End
+                Until bStop
+                Set piLinesRead to iLines
+                Function_Return DFSRC_IMAGE_DEFINITION
+            End
+            Else If (BeginsWith(oStringFunctions,sUcValue,"#COMMAND")) Begin // Command
+                Set piItemFoundInLine to iLines
+                Repeat
+                    Readln sValue
+                    Move (SeqEof) to bSeqEof
+                    Increment iLines
+                    If (BeginsWith(oStringFunctions,Uppercase(Trim(sValue)),"#ENDCOMMAND")) Begin
+                        Move True to bStop
+                    End
+                    If (bSeqEof) Begin
+                        Set piLinesRead to iLines
+                        Function_Return DFSRC_ERROR_COMMAND // Unfinished command definition
+                    End
+                Until bStop
+                Set piLinesRead to iLines
+                Function_Return DFSRC_COMMAND_DEF
+            End
+        End
+
+        Set piLinesRead to iLines
+        Set piItemFoundInLine to iLines
+        Function_Return DFSRC_COMMAND_LINE
+    End_Function
+End_Object // _oVdfSourceLineReader
+
+Object _oSrcAutoDocCommentBuilder is an Array
+    Set Delegation_Mode to Delegate_To_Parent // The Array class is the only bloody class that does not have this as its default.
+    Property String psPkgName
+
+    Function CommentValue Returns String // Returns all the items as one line separated value.
+        Integer iItm iMax
+        Boolean bNewLine bPreviousLineStartedAtPos1 bInsertSpaceChar
+        String sValue sRval sLf
+        String sNewLine 
+        
+        Move False to bPreviousLineStartedAtPos1
+        Move "" to sRval
+        Move (character(10)) to sLf
+        Get item_count to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            Move False to bInsertSpaceChar
+            Get Value iItm to sNewLine
+            Move (Rtrim(sNewLine)) to sNewLine
+            If (trim(sNewLine)="<code>" or Trim(sNewLine)="</code>") Begin
+                If (sRval<>"") Begin
+                    Move (sRval+sLf) to sRval 
+                End
+                Move (sRval+Trim(sNewLine)) to sRval
+                Move False to bPreviousLineStartedAtPos1
+            End
+            Else Begin
+                Move (iItm>0) to bNewLine
+                If (bNewLine) Begin
+                    // If both this line and the previous line starts in pos 1 we will omit the new-line
+                    If (bPreviousLineStartedAtPos1 and Trim(sNewLine)<>"" and Left(sNewLine,1)<>" ") Begin
+                       Move False to bNewLine
+                       Move True to bInsertSpaceChar
+                    End
+                End
+                If (bNewLine) Begin
+                    Move (sRval+sLf) to sRval
+                End
+                Move (sRval+If(bInsertSpaceChar," ","")+sNewLine) to sRval
+                Move (Trim(sNewLine)<>"" and Left(sNewLine,1)<>" ") to bPreviousLineStartedAtPos1
+            End
+        Loop
+        Function_Return sRval
+    End_Function
+
+    Register_Object _oVdfSourceObjectsScanned
+    Procedure add_line String sCommentLine
+        Integer iGrb
+        tNamedValueList stEmptyMeta
+        If (BeginsWith(oStringFunctions,Trim(sCommentLine), "pkg.doc.end")) Begin
+            Get Add_Object of _oVdfSourceObjectsScanned SIT_PACKAGE (psPkgName(Self)) -1 (psPkgName(Self)) 0 (CommentValue(Self)) stEmptyMeta to iGrb
+            Send Delete_Data
+        End
+        Else Begin
+            Set Value (Item_Count(Self)) to sCommentLine
+        End
+    End_Procedure
+End_Object
+
+Object _oSrcMetaBuilder is a cObject
+    Property tNamedValueList pstrList (NewNamedValueList(oNamedValueFunctions,False))
+
+    Procedure ResetMeta
+        Set pstrList to (NewNamedValueList(oNamedValueFunctions,False))
+    End_Procedure
+
+    Procedure AddMeta String sLine
+        Integer iIndex iMax
+        String[] aValues
+        tNamedValueList stList
+
+        Get pstrList to stList
+        Move (Trim(sLine)) to sLine
+
+        // Strip off { and } :
+        Move (Remove(sLine,1,1)) to sLine
+        Move (rRemove(oStringFunctions,sLine,1)) to sLine
+        Send SplitString of oStringFunctions sLine " =," True True (&aValues)
+        Move (SizeOfArray(aValues)-1) to iMax
+        Move 0 to iIndex
+
+        While ((iIndex+1)<=iMax)
+            Set NamedValue of oNamedValueFunctions (&stList) aValues[iIndex] to aValues[iIndex+1]
+            Move (iIndex+2) to iIndex
+        Loop
+        Set pstrList to stList
+    End_Procedure
+End_Object
+
+Struct _tDFSrcFile
+    String sFile
+    String sFolder
+    Boolean bFound
+End_Struct
+
+Object _oVdfSourceFilesScanned is a cObject
+    Property _tDFSrcFile[] paSrcFiles
+    Function FindFileName String sFileName Returns Integer
+        Integer iItm iMax
+        _tDFSrcFile[] aFiles
+        Get paSrcFiles to aFiles
+        Move (SizeOfArray(aFiles)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            If (sFileName=aFiles[iItm].sFile) ;
+                    Function_Return iItm
+        Loop
+        Function_Return -1
+    End_Function
+    Function AddPackage String sFileName Returns Boolean
+        Integer iItm
+        _tDFSrcFile[] aFiles
+        Get FindFileName sFileName to iItm
+        If (iItm=-1) Begin
+            Get paSrcFiles to aFiles
+            Move (SizeOfArray(aFiles)) to iItm
+            Move sFileName to aFiles[iItm].sFile
+            Set paSrcFiles to aFiles
+            Function_Return True
+        End
+        Function_Return False
+    End_Function
+    Function FileLocation String sFileName Returns String
+    End_Function
+    Procedure reset
+        _tDFSrcFile[] aSrcFiles
+        Set paSrcFiles to aSrcFiles
+    End_Procedure
+End_Object  // _oVdfSourceFilesScanned
+
+Struct _tDFSourceObject
+    Integer iType    // Type of object
+    String  sName    // Name of object
+    Integer iMother  // 'Child' of which other object
+    String  sSource  // Located in source file
+    Integer iLine    // Line in source file
+    String  sAutoDoc // AutoDoc comment
+    String  sAux1    // Aux value 1
+    String  sAux2    // Aux value 2
+    String  sAux3    // Aux value 3
+    String  sAux4    // Aux value 4
+    String[] aDocs // For doc on individual method parameters
+    tNamedValueList stMeta
+End_Struct
+
+Object _oVdfSourceObjectsScanned is a cObject
+    Property _tDFSourceObject[] paObjects
+
+    Function Add_Object Integer iType String sName Integer iMother String sSource Integer iLine String sAutoDoc tNamedValueList stMeta Returns Integer
+        Integer iSize
+        _tDFSourceObject[] aObjects
+        Get paObjects to aObjects
+        Move (SizeOfArray(aObjects)) to iSize
+
+        Move iType    to aObjects[iSize].iType
+        Move sName    to aObjects[iSize].sName
+        Move iMother  to aObjects[iSize].iMother
+        Move sSource  to aObjects[iSize].sSource
+        Move iLine    to aObjects[iSize].iLine
+        Move sAutoDoc to aObjects[iSize].sAutoDoc
+        Move stMeta  to aObjects[iSize].stMeta
+        Set paObjects to aObjects
+        Function_Return iSize
+    End_Function
+
+    Procedure reset
+        _tDFSourceObject[] aObjects
+        Set paObjects to aObjects
+    End_Procedure
+
+    Procedure SetAuxValue1 Integer iObject String sValue
+        _tDFSourceObject[] aObjects
+        Get paObjects to aObjects
+        Move sValue to aObjects[iObject].sAux1
+        Set paObjects to aObjects
+    End_Procedure
+    Procedure SetAuxValue2 Integer iObject String sValue
+        _tDFSourceObject[] aObjects
+        Get paObjects to aObjects
+        Move sValue to aObjects[iObject].sAux2
+        Set paObjects to aObjects
+    End_Procedure
+    Procedure SetAuxValue3 Integer iObject String sValue
+        _tDFSourceObject[] aObjects
+        Get paObjects to aObjects
+        Move sValue to aObjects[iObject].sAux3
+        Set paObjects to aObjects
+    End_Procedure
+    Procedure SetAuxValue4 Integer iObject String sValue
+        _tDFSourceObject[] aObjects
+        Get paObjects to aObjects
+        Move sValue to aObjects[iObject].sAux4
+        Set paObjects to aObjects
+    End_Procedure
+    Procedure SetParameterDocs Integer iObject String[] aDocs
+        _tDFSourceObject[] aObjects
+        Get paObjects to aObjects
+        Move aDocs to aObjects[iObject].aDocs
+        Set paObjects to aObjects
+    End_Procedure
+End_Object // _oVdfSourceObjectsScanned
+
+
+Struct _tDFSourceItemOnLine
+    String sItem
+    Integer iType
+    Integer iClass
+End_Struct
+
+Class _cSrcItemsOnLine is a cObject // Items found on a single line of source code
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property _tDFSourceItemOnLine[] paItems
+    End_Procedure
+
+    Function FindKeyWord String sWord _tDFSourceItemOnLine[] aItems Returns Integer
+        Integer iMax iRow
+        Move (uppercase(sWord)) to sWord
+        Move (SizeOfArray(aItems)) to iMax
+        Decrement iMax
+        For iRow from 0 to iMax
+          If (uppercase(aItems[iRow].sItem)=sWord) ;
+                  Function_Return iRow
+        Loop
+        Function_Return -1 // Not found
+    End_Function
+
+    Procedure add_item String sWord Integer iType Integer iClass
+        Integer iSize
+        _tDFSourceItemOnLine[] aItems
+        Get paItems to aItems
+        Move (SizeOfArray(aItems)) to iSize
+        Move sWord to aItems[iSize].sItem
+        Move iType to aItems[iSize].iType
+        Move iClass to aItems[iSize].iClass
+        Set paItems to aItems
+    End_Procedure
+
+    Procedure reset
+        _tDFSourceItemOnLine[] aItems
+        Set paItems to aItems
+    End_Procedure
+End_Class // _cSrcItemsOnLine
+
+Class cSrcCodeReader is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property Integer piCurrentScanDepth 0
+        Property Integer piMaxScanDepth 1
+        Object oItemsOnLine is an _cSrcItemsOnLine
+        End_Object
+        Property Integer piTotalLinesRead 0
+        Property tDFSrcObjectLabel[] paObjectTypes
+
+        Send add_type_label SIT_CLASS          "CLS" "Class definition"
+        Send add_type_label SIT_COMMAND        "CMD" "Command definition"
+        Send add_type_label SIT_CONSTANT       "CNS" "Global symbol"
+        Send add_type_label SIT_GLOBALVAR      "GLB" "Global variable"
+        Send add_type_label SIT_DD_CLASS       "DDC" "DataDictionary Class"
+        Send add_type_label SIT_EFUNCTION      "EFN" "External function"
+        Send add_type_label SIT_FUNCTION       "FNC" "Function"
+        Send add_type_label SIT_IMAGE          "IMG" "Image definition"
+        Send add_type_label SIT_INCLUDE        "INC" "#Include directive"
+        Send add_type_label SIT_OBJECT         "OBJ" "Object definition"
+        Send add_type_label SIT_PROCEDURE      "PRC" "Procedure"
+        Send add_type_label SIT_PROPERTY       "PRP" "Property"
+        Send add_type_label SIT_USE            "USE" "Use statement"
+        Send add_type_label SIT_STRUCT         "STR" "Struct"
+        Send add_type_label SIT_STRUCT_MEMBER  "MBR" "Struct member"
+        Send add_type_label SIT_ENUMLIST       "ENL" "Enum list"
+    End_Procedure
+
+    Procedure add_type_label Integer iType String sShortLabel String sLongLabel
+        tDFSrcObjectLabel[] aObjectTypes
+        Get paObjectTypes to aObjectTypes
+        Move sShortLabel to aObjectTypes[iType].sShortLabel
+        Move sLongLabel to aObjectTypes[iType].sLongLabel
+        Set paObjectTypes to aObjectTypes
+    End_Procedure
+    Function ObjectTypeShortLabel Integer iType Returns String
+        tDFSrcObjectLabel[] aObjectTypes
+        Get paObjectTypes to aObjectTypes
+        Function_Return aObjectTypes[iType].sShortLabel
+    End_Function
+    Function ObjectTypeLongLabel Integer iType Returns String
+        tDFSrcObjectLabel[] aObjectTypes
+        Get paObjectTypes to aObjectTypes
+        Function_Return aObjectTypes[iType].sLongLabel
+    End_Function
+
+    Procedure Split_Line_In_Items String sValue
+        Integer iPos iLen bInString bInExpr bInItem iBalance
+        String sChar sItem sQuote sStartPrenthesis sEndPrenthesis
+        Send reset of oItemsOnLine
+        Move (length(sValue)) to iLen
+        Move 0 to bInItem
+        Move 0 to bInString
+        Move 0 to bInExpr
+        Move "" to sItem
+        For iPos from 1 to iLen
+            Move (mid(sValue,1,iPos)) to sChar
+            If bInItem Begin  // In item?
+                If bInExpr Begin // In expression)?
+                    Move (sItem+sChar) to sItem
+                    If bInString Begin // In string?
+                        If sChar eq sQuote ;
+                                Move 0 to bInString
+                    End
+                    Else Begin // Not in string (but in expression)
+                        If sChar in ("'"+'"') Begin // String constant begin
+                            Move 1 to bInString
+                            Move sChar to sQuote
+                        End
+                        Else Begin
+                            If sChar eq sStartPrenthesis ;
+                                    Increment iBalance
+                            If sChar eq sEndPrenthesis ;
+                                    Decrement iBalance
+                            If iBalance eq 0 Begin
+                                Send add_item of oItemsOnLine sItem TYP.UNKNOWN CLS.EXPR
+                                Move "" to sItem
+                                Move 0 to bInItem
+                                Move 0 to bInExpr
+                            End
+                        End
+                    End
+                End
+                Else Begin // Not in expression
+                    If bInString Begin // In string?
+                        Move (sItem+sChar) to sItem
+                        If sChar eq sQuote Begin // End the string constant?
+                            Send add_item of oItemsOnLine sItem TYP.String CLS.CONST
+                            Move "" to sItem
+                            Move 0 to bInString
+                            Move 0 to bInItem
+                        End
+                    End
+                    Else Begin // Not in string!
+                        If sChar eq " " Begin
+                            Send add_item of oItemsOnLine sItem TYP.UNKNOWN CLS.UNKNOWN
+                            Move "" to sItem
+                            Move 0 to bInItem
+                        End
+                        Else ;
+                                Move (sItem+sChar) to sItem
+                    End
+                End
+            End
+            Else Begin // Not in item!
+                If sChar ne "" Begin
+                    If sChar in "([{" Begin // Expression begin!
+                        Move 1 to bInItem // OK, we're in an item that happens to be a expression
+                        Move 1 to bInExpr
+                        Move 1 to iBalance
+                        Move sChar to sStartPrenthesis
+                        If sChar eq "(" ;
+                                Move ")" to sEndPrenthesis
+                        If sChar eq "[" ;
+                                Move "]" to sEndPrenthesis
+                        If sChar eq "{" ;
+                                Move "}" to sEndPrenthesis
+                        Move sChar to sItem
+                    End
+                    Else If sChar in ("'"+'"') Begin // String constant begin
+                        Move 1 to bInItem
+                        Move 1 to bInString
+                        Move sChar to sQuote // We will look for this to end the string
+                        Move sChar to sItem
+                    End
+                    Else Begin // Some other kind of item begin
+                        Move 1 to bInItem
+                        Move sChar to sItem
+                    End
+                End
+            End
+        Loop
+        If sItem ne "" ;
+                Send add_item of oItemsOnLine sItem TYP.UNKNOWN CLS.UNKNOWN
+    End_Procedure
+
+    Procedure source_error Integer iError
+        If (iError=DFSRC_ERROR_IMAGE) Begin
+            Send info_box "Unfinished image definition" "Source error"
+        End
+        Else If (iError=DFSRC_ERROR_COMMAND) Begin
+            Send info_box "Unfinished command definition" "Source error"
+        End
+        Else begin
+            Send Info_Box ("Unknown error code: "+String(iError)) "Source error"
+        End
+    End_Procedure
+
+    Procedure reset
+        Send reset of _oVdfSourceFilesScanned
+        Set piCurrentScanDepth to 0
+        Set piTotalLinesRead to 0
+    End_Procedure
+
+    Function bIncrement_ScanDepth Returns Boolean
+        Integer iCurrentScanDepth iMaxScanDepth
+        Get piMaxScanDepth     to iMaxScanDepth
+        Get piCurrentScanDepth to iCurrentScanDepth
+        If (iMaxScanDepth<>0) Begin
+            If (iCurrentScanDepth<iMaxScanDepth) Begin
+                Set piCurrentScanDepth to (iCurrentScanDepth+1)
+                Function_Return True
+            End
+        End
+        Else Begin
+            Set piCurrentScanDepth to (iCurrentScanDepth+1)
+            Function_Return True
+        End
+        Function_Return False
+    End_Function
+
+    Procedure Decr_ScanDepth
+        Set piCurrentScanDepth to (piCurrentScanDepth(Self)-1)
+    End_Procedure
+
+    Function AutoDoc Returns String
+        String sRval
+        Move (CommentValue(_oSrcAutoDocCommentBuilder)) to sRval
+        Send Delete_Data of _oSrcAutoDocCommentBuilder
+        Function_Return sRval
+    End_Function
+    
+    Function MetaItems Returns tNamedValueList
+        tNamedValueList stList
+        Get pstrList of _oSrcMetaBuilder to stList
+        Send ResetMeta of _oSrcMetaBuilder 
+        Function_Return stList
+    End_Function
+
+    Procedure DoParameterList Integer iObject String[] aDocs
+        Integer iRow iMax hItemsOnLine iForItm iGlobalItm iSetItm
+        Boolean bByRef
+        String sTypes sNames sItem
+        _tDFSourceItemOnLine[] aItems
+        Get paItems of oItemsOnLine to aItems
+        Move "" to sTypes
+        Move "" to sNames
+
+        If (uppercase(aItems[0].sItem)="EXTERNAL_FUNCTION32") ;
+                Move 4 to iRow
+        Else Begin
+            Move (FindKeyWord(oItemsOnLine,"for",aItems)) to iForItm
+            Move (FindKeyWord(oItemsOnLine,"set",aItems)) to iSetItm
+            Move (FindKeyWord(oItemsOnLine,"global",aItems)) to iGlobalItm
+            If (iGlobalItm<>-1) ;
+                    Move (iGlobalItm+1) to iRow
+            Else If (iForItm<>-1) ;
+                    Move (iForItm+2) to iRow
+            Else If (iSetItm<>-1) ;
+                    Move 3 to iRow
+            Else ;
+                    Move 2 to iRow
+        End
+        Move (SizeOfArray(aItems)) to iMax
+        While (iRow<iMax)
+            Move aItems[iRow].sItem to sItem
+            If (Uppercase(sItem)="BYREF") ;
+                    Increment iRow
+            Else Begin
+                If (Uppercase(sItem)="RETURNS") ;
+                        Move iRow to iMax
+                Else Begin
+                    Move (sTypes*sItem) to sTypes
+                    Increment iRow
+                    Move (Uppercase(aItems[iRow].sItem)="BYREF") to bByRef
+                    If (bByref) Begin
+                        Increment iRow
+                        Move (sNames*"&"+aItems[iRow].sItem) to sNames
+                    End
+                    Else ;
+                            Move (sNames*aItems[iRow].sItem) to sNames
+                    Increment iRow
+                End
+            End
+        End
+        Send SetAuxValue3 of _oVdfSourceObjectsScanned iObject sTypes
+        Send SetAuxValue4 of _oVdfSourceObjectsScanned iObject sNames
+        Send SetParameterDocs of _oVdfSourceObjectsScanned iObject aDocs
+    End_Procedure
+
+    Procedure read_lines Integer iCh String sFileName
+        String sCmdLine sComments sCommand sName sScope sEnumListDoc
+        Integer iRval iEnumListLine
+        Integer iLinesRead     //
+        Integer iLineOffset
+        Integer iObjectLine
+        Integer iGrb
+        Integer hItemsOnLine
+        Boolean bInClass
+        Boolean bInObject
+        Boolean bInProcedure
+        Boolean bInFunction
+        Boolean bInStruct
+        Boolean bInEnumList bEnumListAdded
+        Integer hSelf
+        Integer iSearchedItem
+        Integer iArgumentCount iArgumentMax
+        Integer[] iStack
+        _tDFSourceItemOnLine[] aItems
+        String[] aStrings
+        String[] aParameterDocs
+        tNamedValueList strEnumListMeta
+
+        Set psPkgName of _oSrcAutoDocCommentBuilder to sFileName
+
+        Move (PathToFileName(oFileFunctions,sFileName)) to sFileName
+        Move (ResizeArray(iStack,0)) to iStack
+        Move (oItemsOnLine(Self)) to hItemsOnLine
+
+        Move 0 to iLineOffset
+        Move 0 to iLinesRead
+
+        Move False to bInClass
+        Move False to bInProcedure
+        Move False to bInFunction
+        Move False to bInStruct
+        Move False to bInEnumList
+        Move -1 to hSelf
+
+        Repeat
+            Move (iLineOffset+iLinesRead) to iLineOffset
+
+            Get Readln of _oVdfSourceLineReader iCh (&sCmdLine) (&sComments) (&aParameterDocs) to iRval
+
+            Move (trim(sComments)) to sComments
+
+            Get piLinesRead of _oVdfSourceLineReader to iLinesRead
+            Set piTotalLinesRead to (piTotalLinesRead(Self)+iLinesRead)
+
+            Move (iLineOffset+piItemFoundInLine(_oVdfSourceLineReader)) to iObjectLine
+
+            //First we look for auto documentation comments:
+            If (BeginsWith(oStringFunctions,sComments,">")) Begin
+                If (BeginsWith(oStringFunctions,sComments,"> ")) begin
+                    Move (Replace("> ",sComments,"")) to sComments
+                End
+                Else begin
+                    Move (Replace(">",sComments,"")) to sComments
+                End
+                Send add_line of _oSrcAutoDocCommentBuilder sComments
+            End
+            // Then we check if it is meta tags
+            If (iRval=DFSRC_META) Begin
+                Send AddMeta of _oSrcMetaBuilder sCmdLine
+            End
+
+            If (iRval=DFSRC_END_OF_FILE) Begin
+              // We do nothing at the end.of.file event
+            End
+            If (iRval=DFSRC_COMMAND_LINE) Begin
+                Send Split_Line_In_Items sCmdLine
+                Get paItems of hItemsOnLine to aItems
+
+                If (SizeOfArray(aItems)>0) Begin
+                    Move (Uppercase(aItems[0].sItem)) to sCommand // move (uppercase(psItem.i(hItemsOnLine,0))) to sCommand
+                End
+                Else Begin
+                    Move "" to sCommand
+                End
+
+                If (bInProcedure or bInFunction) Begin
+// ToDo: Call method body collect
+                End
+
+                If (bInStruct) Begin
+                    If (sCommand="END_STRUCT") Begin
+                        Move False to bInStruct
+                        Get IntegerPop of oStackFunctions (&iStack) to hSelf // Get iPop of hObjectNextingStack to hSelf
+                    End
+                    Else Begin
+                        If (SizeOfArray(aItems)>1) Begin // If not two items on line (type and member name) we ignore it.
+                            Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                            Get Add_Object of _oVdfSourceObjectsScanned SIT_STRUCT_MEMBER sName hSelf sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                            Send SetAuxValue1 of _oVdfSourceObjectsScanned iGrb aItems[0].sItem
+                        End
+                    End
+                End
+                Else Begin
+
+                    If (sCommand="USE") Begin
+                        Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_USE sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        //Send read_source_file sName
+                    End
+                    If (sCommand="#INCLUDE") Begin
+                        Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_INCLUDE sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        //Send read_source_file sName
+                    End
+                    If (sCommand="CLASS") Begin
+                        Move aItems[1].sItem to sName
+                        Send IntegerPush of oStackFunctions hSelf (&iStack)
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_CLASS sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to hSelf
+                        Send SetAuxValue1 of _oVdfSourceObjectsScanned hSelf aItems[4].sItem // Superclass
+                        Move True to bInClass
+                    End
+                    If (sCommand="END_CLASS") Begin // X
+                        Get IntegerPop of oStackFunctions (&iStack) to hSelf
+                        Move False to bInClass
+                    End
+                    If (sCommand="OBJECT" or sCommand="CD_POPUP_OBJECT") Begin
+                        If (not(bInProcedure or bInFunction)) Begin
+                            Move aItems[1].sItem to sName
+                            Send IntegerPush of oStackFunctions hSelf (&iStack)
+                            Get Add_Object of _oVdfSourceObjectsScanned SIT_OBJECT sName hSelf sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to hSelf
+                            Send SetAuxValue1 of _oVdfSourceObjectsScanned hSelf aItems[4].sItem // Class
+                            Move True to bInObject
+                        End
+                    End
+                    If (sCommand="DEFERRED_VIEW") Begin
+                        If (not(bInProcedure or bInFunction)) Begin
+                            Move aItems[1].sItem to sName
+                            Send IntegerPush of oStackFunctions hSelf (&iStack)
+                            Get Add_Object of _oVdfSourceObjectsScanned SIT_OBJECT sName hSelf sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to hSelf
+                            Send SetAuxValue1 of _oVdfSourceObjectsScanned hSelf aItems[7].sItem // Class
+                            Move True to bInObject
+                        End
+                    End
+                    If (sCommand="END_OBJECT" or sCommand="CD_END_OBJECT") Begin
+                        If (not(bInProcedure or bInFunction)) Begin
+                            Get IntegerPop of oStackFunctions (&iStack) to hSelf // Get iPop of hObjectNextingStack to hSelf
+                            Move False to bInObject
+                        End
+                    End
+                    If (sCommand="STRUCT") Begin
+                        If (not(bInStruct)) Begin
+                            Move aItems[1].sItem to sName // Name of the structure definition
+                            Send IntegerPush of oStackFunctions hSelf (&iStack) // Send push.i to hObjectNextingStack hSelf
+                            Get Add_Object of _oVdfSourceObjectsScanned SIT_STRUCT sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to hSelf
+                            Move True to bInStruct
+                        End
+                    End
+                    If (sCommand="FUNCTION") Begin // X
+                        If (SizeOfArray(aItems)>1) Begin
+                            Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                            Get Add_Object of _oVdfSourceObjectsScanned SIT_FUNCTION sName hSelf sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                            Move (FindKeyWord(hItemsOnLine,"returns",aItems)) to iSearchedItem
+                            If iSearchedItem ne -1 Begin
+                                Send SetAuxValue1 of _oVdfSourceObjectsScanned iGrb aItems[iSearchedItem+1].sItem // (psItem.i(hItemsOnLine,iSearchedItem+1))
+                            End
+                            Else Begin
+                                Send SetAuxValue1 of _oVdfSourceObjectsScanned iGrb "Missing return type"
+                            End
+                            Move (uppercase(aItems[2].sItem)) to sScope
+                            If (sScope="GLOBAL") Begin
+                                Send SetAuxValue2 of _oVdfSourceObjectsScanned iGrb "global"
+                            End
+                            If (sScope="FOR") Begin
+                                Send SetAuxValue2 of _oVdfSourceObjectsScanned iGrb ("for "+String(aItems[3].sItem)) // ("for "+String(psItem.i(hItemsOnLine,3)))
+                            End
+                            Send DoParameterList iGrb aParameterDocs
+                        End
+                        Else Begin
+                            Move "" to sName
+                        End
+                        Move True to bInFunction
+                    End
+                    If (sCommand="END_FUNCTION") Begin
+                        Move False to bInFunction
+                    End
+                    If (sCommand="PROCEDURE") Begin // X
+                        Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                        If (uppercase(sName)="SET") begin
+                            Move ("Set "+aItems[2].sItem) to sName
+                        End
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_PROCEDURE sName hSelf sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        If (SizeOfArray(aItems)>2) Begin
+                            Move (uppercase(aItems[2].sItem)) to sScope
+                            If (sScope="GLOBAL") ;
+                                    Send SetAuxValue2 of _oVdfSourceObjectsScanned iGrb "global"
+                            If (sScope="FOR")    ;
+                                    Send SetAuxValue2 of _oVdfSourceObjectsScanned iGrb ("for "+String(aItems[3].sItem))
+                        End
+                        If (SizeOfArray(aItems)>3) Begin
+                            Move (uppercase(aItems[3].sItem)) to sScope
+                            If (sScope="GLOBAL") ;
+                                    Send SetAuxValue2 of _oVdfSourceObjectsScanned iGrb "global"
+                            If (sScope="FOR")    ;
+                                    Send SetAuxValue2 of _oVdfSourceObjectsScanned iGrb ("for "+String(aItems[4].sItem))
+                        End
+                        Send DoParameterList iGrb aParameterDocs
+                        Move True to bInProcedure
+                    End
+                    If (sCommand="END_PROCEDURE") Begin
+                        Move False to bInProcedure
+                    End
+                    If (sCommand="PROPERTY") Begin
+                        Move aItems[2].sItem to sName // move (psItem.i(hItemsOnLine,2)) to sName
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_PROPERTY sName hSelf sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        Send SetAuxValue1 of _oVdfSourceObjectsScanned iGrb aItems[1].sItem // (psItem.i(hItemsOnLine,1)) // Property type
+                    End
+                    If (sCommand="EXTERNAL_FUNCTION32") Begin
+                        Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_EFUNCTION sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        Send DoParameterList iGrb aParameterDocs
+                    End
+                    If (sCommand="#REPLACE") Begin
+                        Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_CONSTANT sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        Send SetAuxValue1 of _oVdfSourceObjectsScanned  iGrb aItems[2].sItem // (psItem.i(hItemsOnLine,2)) // Symbol value
+                    End
+                    If (sCommand="ENUM_LIST" or sCommand="ENUMERATION_LIST") Begin
+                        Get AutoDoc to sEnumListDoc
+                        Get MetaItems to strEnumListMeta
+                        Move iObjectLine to iEnumListLine
+                        Move True to bInEnumList
+                    End
+                    If (sCommand="END_ENUM_LIST" or sCommand="END_ENUMERATION_LIST") Begin
+                        If (bEnumListAdded) ;
+                                Get IntegerPop of oStackFunctions (&iStack) to hSelf // Get iPop of hObjectNextingStack to hSelf
+                        Move False to bInEnumList
+                        Move False to bEnumListAdded
+                    End
+                    If (sCommand="GLOBAL_VARIABLE") Begin
+                        Move aItems[2].sItem to sName // name of global
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_GLOBALVAR sName -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        Send SetAuxValue1 of _oVdfSourceObjectsScanned  iGrb aItems[1].sItem // type
+                        //Send read_source_file sName
+                    End
+                    If (sCommand="DEFINE") Begin
+                        Move aItems[1].sItem to sName // move (psItem.i(hItemsOnLine,1)) to sName
+
+                        If (bInEnumList) Begin
+                            If not (bEnumListAdded) Begin
+                                Send IntegerPush of oStackFunctions hSelf (&iStack) // Send push.i to hObjectNextingStack hSelf
+                                Get Add_Object of _oVdfSourceObjectsScanned SIT_ENUMLIST ("Enum."+sName) -1 sFileName iEnumListLine sEnumListDoc strEnumListMeta to hSelf
+                                Move True to bEnumListAdded
+                            End
+                        End
+
+                        Get Add_Object of _oVdfSourceObjectsScanned SIT_CONSTANT sName (If(bInEnumList,hSelf,-1)) sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+                        If (SizeOfArray(aItems)>2 and Lowercase(aItems[2].sItem)="for") ;
+                            Send SetAuxValue1 of _oVdfSourceObjectsScanned iGrb aItems[3].sItem // (psItem.i(hItemsOnLine,3)) // Symbol value
+                        Else ;
+                            Send SetAuxValue1 of _oVdfSourceObjectsScanned iGrb "-- Auto enumerated --" // Symbol value
+                    End
+                End
+            End
+            If (iRval=DFSRC_IMAGE_DEFINITION) Begin
+                Move (Replace("/",sCmdLine,"")) to sCmdLine // Remove image identificator
+                Send SplitString of oStringFunctions sCmdLine " " True False (&aStrings)
+                Get Add_Object of _oVdfSourceObjectsScanned SIT_IMAGE aStrings[0] -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+            End
+            If (iRval=DFSRC_COMMENT_ONLY) Begin
+                // We do nothing if comments only
+            End
+            If (iRval=DFSRC_COMMAND_DEF) Begin
+                Send SplitString of oStringFunctions sCmdLine " " True False (&aStrings)
+                Get Add_Object of _oVdfSourceObjectsScanned SIT_COMMAND aStrings[1] -1 sFileName iObjectLine (AutoDoc(Self)) (MetaItems(Self)) to iGrb
+            End
+            If (iRval=DFSRC_ERROR_IMAGE) begin
+                Send source_error DFSRC_ERROR_IMAGE
+            End
+            If (iRval=DFSRC_ERROR_COMMAND) begin
+                Send source_error DFSRC_ERROR_COMMAND
+            End
+            
+        Until (iRval=DFSRC_END_OF_FILE or iRval=DFSRC_ERROR_IMAGE or iRval=DFSRC_ERROR_COMMAND)
+    
+        If (not(IntegerIsEmpty(oStackFunctions,iStack))) Begin
+            Showln "Something is not balanced in " sFileName
+        End
+    End_Procedure
+
+    Function read_source_file String sFileName Returns _tDFSourceObject[]
+        Integer iChannel //depth#
+        _tDFSourceObject[] aObjects
+        
+        If (FileSizeBytes(oFileFunctions,sFileName)<(1024.0*1024)) Begin
+            
+            Set paObjects of _oVdfSourceObjectsScanned to aObjects
+    
+            If (bIncrement_ScanDepth(Self)) Begin
+                Move (lowercase(sFileName)) to sFileName
+                If not (sFileName contains ".") ;
+                        Move (sFileName+".pkg") to sFileName
+                If (AddPackage(_oVdfSourceFilesScanned,sFileName)) Begin
+                    Get DirectInput of oFileFunctions sFileName to iChannel
+                    If (iChannel>=0) Begin
+                        Send read_lines iChannel sFileName
+                        Send CloseInput of oFileFunctions iChannel
+                    End
+                End
+                Send Decr_ScanDepth
+            End
+            Get paObjects of _oVdfSourceObjectsScanned to aObjects
+        End
+        Function_Return aObjects
+    End_Function
+
+End_Class // cSrcCodeReader
+
+
+Object _oVdfSourceCodeReader is a cSrcCodeReader
+End_Object
+                           
+Class cSourceCodeReaderFunctions is a cObject
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property tWildCardEvalSequence[] paWildCards
+        Property Boolean pbDocumentedItemsOnly False // Only collect those items that has been '//>' commented
+        Property String _psPackageName
+        Send SetupFileMasks
+    End_Procedure
+
+    Procedure SetupFileMasks
+            Integer iItem iMax
+            tWildCardEvalSequence[] aWildCards
+            String[] aMasks
+#IFDEF Is$WebApp
+            Send StringPush of oStackFunctions "*.src" (&aMasks)
+            Send StringPush of oStackFunctions "*.vw" (&aMasks)
+            Send StringPush of oStackFunctions "*.rv" (&aMasks)
+            Send StringPush of oStackFunctions "*.dg" (&aMasks)
+            Send StringPush of oStackFunctions "*.sl" (&aMasks)
+            Send StringPush of oStackFunctions "*.wo" (&aMasks)
+            Send StringPush of oStackFunctions "*.dd" (&aMasks)
+            Send StringPush of oStackFunctions "*.bp" (&aMasks)
+            Send StringPush of oStackFunctions "*.pkg" (&aMasks)
+            Send StringPush of oStackFunctions "*.inc" (&aMasks)
+#ELSE
+            Get FileExtensions of oVdfStudioFunctions to aMasks
+#ENDIF
+            Move (SizeOfArray(aMasks)-1) to iMax
+            For iItem from 0 to iMax
+                Get WildCardEvalSequence of oStringFunctions aMasks[iItem] to aWildCards[iItem]
+            Loop
+            Set paWildCards to aWildCards
+    End_Procedure
+
+    Procedure AddMethodParams tDFMethod ByRef stMethod String sTypes String sNames String[] aDocs
+        Integer iParam iMax
+        Boolean bByRef
+        String[] aTypes aNames
+        Send SplitString of oStringFunctions sTypes " " True False (&aTypes)
+        Send SplitString of oStringFunctions sNames " " True False (&aNames)
+        Move (SizeOfArray(aTypes)) to iMax
+        Decrement iMax
+        For iParam from 0 to iMax
+            Move (left(aNames[iParam],1)="&") to bByRef
+            If (bByRef) ;
+                    Move (replace("&",aNames[iParam],"")) to aNames[iParam]
+            Move aTypes[iParam] to stMethod.aParameters[iParam].sType
+            Move aNames[iParam] to stMethod.aParameters[iParam].sName
+            Move bByRef to stMethod.aParameters[iParam].bByRef
+            Move stMethod.stLoc to stMethod.aParameters[iParam].stLoc
+            If (iParam<SizeOfArray(aDocs)) Begin
+                Move aDocs[iParam] to stMethod.aParameters[iParam].sDoc
+            End
+        Loop
+    End_Procedure
+
+    Function StructMembers Integer iMother _tDFSourceObject[] aSrcObjects Returns tDFStructMember[]
+        Integer iMax iItm iMember
+        tDFStructMember[] aStructMembers
+        Move 0 to iMember
+        Move (SizeOfArray(aSrcObjects)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            If (aSrcObjects[iItm].iMother=iMother) Begin
+                Move aSrcObjects[iItm].sName to aStructMembers[iMember].sName
+                Move aSrcObjects[iItm].sAux1 to aStructMembers[iMember].sType
+                Move aSrcObjects[iItm].sAutoDoc to aStructMembers[iMember].sDoc
+                Get SourceLocation aSrcObjects[iItm].iLine aSrcObjects[iItm].stMeta to aStructMembers[iMember].stLoc
+                Increment iMember
+            End
+        Loop
+        Function_Return aStructMembers
+    End_Function
+
+    Function EnumListMembers Integer iMother _tDFSourceObject[] aSrcObjects Returns tDFConstant[]
+        Integer iMax iItm iMember
+        tDFConstant[] aConstants
+        Move 0 to iMember
+        Move (SizeOfArray(aSrcObjects)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            If (aSrcObjects[iItm].iMother=iMother) Begin
+                Move aSrcObjects[iItm].sName to aConstants[iMember].sName
+                Move aSrcObjects[iItm].sAux1 to aConstants[iMember].sValue
+                Move aSrcObjects[iItm].sAutoDoc to aConstants[iMember].sDoc
+                Get SourceLocation aSrcObjects[iItm].iLine aSrcObjects[iItm].stMeta to aConstants[iMember].stLoc
+                Increment iMember
+            End
+        Loop
+        Function_Return aConstants
+    End_Function
+
+    Enum_List // RootModes
+        Define RM_PACKAGE // Items must be added at package level
+        Define RM_CLASS   // Items must be added at class level
+        Define RM_OBJECT  // Items must be added at object level
+    End_Enum_List
+
+    Function SourceLocation Integer iLine tNamedValueList stMeta Returns tDFLocation
+        tDFLocation stLocation
+        Move iLine to stLocation.iLineNo
+        Get _psPackageName to stLocation.sFileName
+        Move stMeta to stLocation.stMeta
+        Function_Return stLocation
+    End_Function
+
+    Procedure add_items Integer iMother Integer iRootMode tDFClass ByRef sRootClass tDFObject ByRef sRootObject tDFLibrary ByRef stLibrary _tDFSourceObject[] aSrcObjects
+        Integer iMax iItm iType iPackageNo iSourceLine
+
+        Integer iNewClass iNewObject iNewMethod
+        Integer iNewCommand iNewStruct iNewUse
+        Integer iNewProperty iNewConstant iNewEnumList
+        Integer iNewGlobalVariable
+
+        String sTypeName sObjectName
+        String sDoc sAux1 sAux2 sAux3 sAux4
+        String[] aParameterDocs
+
+        tDFClass stClass stClassEmpty
+        tDFObject stObject sObjectEmpty
+        tDFMethod stMethod sMethodEmpty
+        tDFCommand stCommand stCommandEmpty
+        tDFGlobalVariable stGlobalVariable stGlobalVariableEmpty
+        tDFStruct stStruct sStructEmpty
+        tDFProperty stProperty sPropertyEmpty
+        tDFConstant stConstant stConstantEmpty
+        tDFEnumList stEnumList sEnumListEmpty
+
+        tNamedValueList stMeta
+
+        Move (SizeOfArray(stLibrary.aPackages)-1) to iPackageNo // Most recently added package
+
+        Move (SizeOfArray(aSrcObjects)) to iMax
+        Decrement iMax
+        For iItm from 0 to iMax
+            If (aSrcObjects[iItm].iMother=iMother) Begin
+                Move aSrcObjects[iItm].iType to iType
+                Get ObjectTypeLongLabel of _oVdfSourceCodeReader iType to sTypeName
+                Move aSrcObjects[iItm].sAutoDoc to sDoc
+                If (sDoc<>"" or not(pbDocumentedItemsOnly(Self))) Begin
+                    Move aSrcObjects[iItm].sName to sObjectName
+                    Move aSrcObjects[iItm].sAux1 to sAux1
+                    Move aSrcObjects[iItm].sAux2 to sAux2
+                    Move aSrcObjects[iItm].sAux3 to sAux3
+                    Move aSrcObjects[iItm].sAux4 to sAux4
+                    Move aSrcObjects[iItm].aDocs to aParameterDocs
+                    Move aSrcObjects[iItm].stMeta to stMeta
+
+                    Move aSrcObjects[iItm].iLine to iSourceLine
+
+                    If (iType=SIT_CLASS) Begin
+                        Move stClassEmpty to stClass
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aClasses)) to iNewClass
+                        Move sObjectName to stClass.sName
+                        Move sDoc to stClass.sDoc
+                        Move sAux1 to stClass.sSuperClass
+                        Get SourceLocation iSourceLine stMeta to stClass.stLoc
+
+                        If (iRootMode=RM_PACKAGE) Begin // We assume that classes are not defined within objects (in reality they may well be?)
+                            Move stClass to stLibrary.aPackages[iPackageNo].aClasses[iNewClass] // Add the new class (makes sure we occupy an entry in the array)
+                            Send add_items iItm RM_CLASS (&stClass) (&stObject) (&stLibrary) aSrcObjects
+                            Move stClass to stLibrary.aPackages[iPackageNo].aClasses[iNewClass] // Update the class
+                        End
+                    End
+                    If (iType=SIT_COMMAND) Begin
+                        Move stCommandEmpty to stCommand
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aCommands)) to iNewCommand
+                        Move sObjectName to stCommand.sName
+                        Move sDoc to stCommand.sDoc
+                        Get SourceLocation iSourceLine stMeta to stCommand.stLoc
+                        Move stCommand to stLibrary.aPackages[iPackageNo].aCommands[iNewCommand]
+                    End
+                    If (iType=SIT_GLOBALVAR) Begin
+                        Move stGlobalVariableEmpty to stGlobalVariable
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aGlobalVariables)) to iNewGlobalVariable
+                        Move sObjectName to stGlobalVariable.sName
+                        Move sAux1 to stGlobalVariable.sType
+                        Move sDoc to stGlobalVariable.sDoc
+                        Get SourceLocation iSourceLine stMeta to stGlobalVariable.stLoc
+                        Move stGlobalVariable to stLibrary.aPackages[iPackageNo].aGlobalVariables[iNewGlobalVariable]
+                    End
+                    If (iType=SIT_ENUMLIST) Begin
+                        Move sEnumListEmpty to stEnumList
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aEnumLists)) to iNewEnumList
+                        Move sObjectName to stEnumList.sName
+                        Move sDoc to stEnumList.sDoc
+                        Move stEnumList to stLibrary.aPackages[iPackageNo].aEnumLists[iNewEnumList]
+                        Get EnumListMembers iItm aSrcObjects to stEnumList.aMembers
+                        Get SourceLocation iSourceLine stMeta to stEnumList.stLoc
+                        Move stEnumList to stLibrary.aPackages[iPackageNo].aEnumLists[iNewEnumList]
+                    End
+                    If (iType=SIT_CONSTANT) Begin
+                        Move stConstantEmpty to stConstant
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aConstants)) to iNewConstant
+                        Move sObjectName to stConstant.sName
+                        Move sAux1 to stConstant.sValue
+                        Move sDoc to stConstant.sDoc
+                        Get SourceLocation iSourceLine stMeta to stConstant.stLoc
+                        Move stConstant to stLibrary.aPackages[iPackageNo].aConstants[iNewConstant]
+                    End
+                    If (iType=SIT_DD_CLASS) Begin
+                    End
+                    If (iType=SIT_EFUNCTION) Begin
+                    End
+                    If (iType=SIT_FUNCTION or iType=SIT_PROCEDURE) Begin
+                        Move sMethodEmpty to stMethod
+                        Move sObjectName to stMethod.sName
+                        Move sDoc to stMethod.sDoc
+                        Get SourceLocation iSourceLine stMeta to stMethod.stLoc
+                        If (iType=SIT_FUNCTION) begin
+                            Move sAux1 to stMethod.sReturnType
+                        End
+                        Send AddMethodParams (&stMethod) sAux3 sAux4 aParameterDocs
+                        If (iRootMode=RM_CLASS) Begin
+                            Move (SizeOfArray(sRootClass.aMethods)) to iNewMethod
+                            Move stMethod to sRootClass.aMethods[iNewMethod]
+                        End
+                        If (iRootMode=RM_OBJECT) Begin
+                            Move (SizeOfArray(sRootObject.aMethods)) to iNewMethod
+                            Move stMethod to sRootObject.aMethods[iNewMethod]
+                        End
+                    End
+                    If (iType=SIT_IMAGE) Begin
+                    End
+                    If (iType=SIT_INCLUDE) Begin
+                    End
+                    If (iType=SIT_OBJECT) Begin
+                        Move sObjectEmpty to stObject
+                        Move sObjectName to stObject.sName
+                        Move sDoc to stObject.sDoc
+                        Move sAux1 to stObject.sSuperClass
+                        Get SourceLocation iSourceLine stMeta to stObject.stLoc
+                        If (iRootMode=RM_PACKAGE) Begin
+                            Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aObjects)) to iNewObject
+                            Move stObject to stLibrary.aPackages[iPackageNo].aObjects[iNewObject] // Add the new object (makes sure we occupy an entry in the array)
+                            Send add_items iItm RM_OBJECT (&stClass) (&stObject) (&stLibrary) aSrcObjects
+                            Move stObject to stLibrary.aPackages[iPackageNo].aObjects[iNewObject] // Update the object
+                        End
+                        If (iRootMode=RM_OBJECT) Begin // Object embedded inside objects
+                            Move (SizeOfArray(sRootObject.aChildObjects)) to iNewObject
+                            Move stObject to sRootObject.aChildObjects[iNewObject] // Reserve an index in the array
+                            Send add_items iItm RM_OBJECT (&stClass) (&stObject) (&stLibrary) aSrcObjects
+                            Move stObject to sRootObject.aChildObjects[iNewObject] // Update that entry
+                        End
+                        If (iRootMode=RM_CLASS) Begin // Object embedded inside classes
+                             //We don't do that
+                        End
+                    End
+                    If (iType=SIT_PROPERTY) Begin
+                        Move sPropertyEmpty to stProperty
+                        Move sObjectName to stProperty.sName
+                        Move sAux1 to stProperty.sType
+                        Move sDoc to stProperty.sDoc
+                        Get SourceLocation iSourceLine stMeta to stProperty.stLoc
+                        If (iRootMode=RM_CLASS) Begin
+                           Move (SizeOfArray(sRootClass.aProperties)) to iNewProperty
+                           Move stProperty to sRootClass.aProperties[iNewProperty]
+                        End
+                        If (iRootMode=RM_OBJECT) Begin
+                           Move (SizeOfArray(sRootObject.aProperties)) to iNewProperty
+                           Move stProperty to sRootObject.aProperties[iNewProperty]
+                        End
+                    End
+                    If (iType=SIT_USE) Begin
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aPackages)) to iNewUse
+                        Move sObjectName to stLibrary.aPackages[iPackageNo].aPackages[iNewUse]
+                    End
+                    If (iType=SIT_IDXREF) Begin
+                    End
+                    If (iType=SIT_FLDREF) Begin
+                    End
+                    If (iType=SIT_STRUCT) Begin
+                        Move sStructEmpty to stStruct
+                        Move (SizeOfArray(stLibrary.aPackages[iPackageNo].aStructs)) to iNewStruct
+                        Move sObjectName to stStruct.sName
+                        Move sDoc to stStruct.sDoc
+                        Get SourceLocation iSourceLine stMeta to stStruct.stLoc
+                        Get StructMembers iItm aSrcObjects to stStruct.aMembers
+                        Move stStruct to stLibrary.aPackages[iPackageNo].aStructs[iNewStruct]
+                    End
+                    If (iType=SIT_STRUCT_MEMBER) Begin
+                        // Can't occur! Handled implicitly by function StructMembers.
+                    End
+                    //Showln sTypeName " " sObjectName
+                    //Showln sDoc
+                    //Showln "--------------------------"
+                End
+            End
+        Loop
+    End_Procedure
+
+    Function LibraryName String sFolder Returns String
+        Integer iEmergencyStop
+        Move 3 to iEmergencyStop
+
+        While (lowercase(right(sFolder,6))<>"appsrc" and iEmergencyStop<>0)
+            Get PathToFolder of oFileFunctions sFolder to sFolder // get parent folder
+            Decrement iEmergencyStop
+        Loop
+        Get PathToFolder of oFileFunctions sFolder to sFolder //
+        Get PathToFileName of oFileFunctions sFolder to sFolder
+        Function_Return sFolder
+    End_Function
+
+    Procedure Add_Data_From_Ctrl_File String sFolder tDFLibrary ByRef stLibrary
+        Integer iChannel
+        Get DirectInput of oFileFunctions (AppendPath(oFileFunctions,sFolder,"libdoc.ctrl")) to iChannel
+        If (iChannel>=0) Begin
+            Readln channel iChannel stLibrary.sVer
+            Readln channel iChannel stLibrary.dPublish
+            Readln channel iChannel stLibrary.sAuthor
+            send CloseInput of oFileFunctions iChannel
+        End
+    End_Procedure
+
+    Global_Variable tDFLibrary gstLibraryBeingRead
+
+    Procedure OnReadPackage String sPackage Integer iCount Integer iMax
+    End_Procedure
+
+        Procedure _ReadPackage String sFullPath tFileData stFileData
+            Integer iPkg // iMax iFile
+            Boolean bMatch
+            tWildCardEvalSequence[] aWildCards // Wildcard evaluation sequences for filenames
+            tDFClass strDummyClass
+            tDFObject strDummyObject
+            _tDFSourceObject[] aSrcObjects // Source code objects as decoded by VdfSourceReader.pkg
+            Get paWildCards to aWildCards
+            Get WildCardMatchAny of oStringFunctions stFileData.sFileName aWildCards to bMatch
+            If (bMatch) Begin
+                Send OnReadPackage stFileData.sFileName 5 10 // (iFile+1) (iMax+1)
+                Get read_source_file of _oVdfSourceCodeReader sFullPath to aSrcObjects
+                // Only if there is any documentation in the aSrcObjects at all and the first piece of such is on the package itself. Or if bDocumentedItemsOnly is false.
+                If (SizeOfArray(aSrcObjects)>=1 and (aSrcObjects[0].iType=SIT_PACKAGE or not(pbDocumentedItemsOnly(Self))) and (aSrcObjects[0].sAutoDoc<>"" or not(pbDocumentedItemsOnly(Self)))) Begin
+                    Move (SizeOfArray(gstLibraryBeingRead.aPackages)) to iPkg
+                    Set _psPackageName to sFullPath //stFileData.sFileName
+                    Move stFileData.sFileName to gstLibraryBeingRead.aPackages[iPkg].sName
+                    Move aSrcObjects[0].sAutoDoc to gstLibraryBeingRead.aPackages[iPkg].sDoc
+                    Send add_items -1 RM_PACKAGE (&strDummyClass) (&strDummyObject) (&gstLibraryBeingRead) aSrcObjects
+                End
+            End
+        End_Procedure
+
+    Function ReadLibrary String sFolder Boolean bDocumentedItemsOnly Returns tDFLibrary
+        tDFLibrary stLibrary
+        tFileData[] aFileData // Files returned ReadFileDataArray call
+
+        Send Reset of _oVdfSourceCodeReader
+        Set pbDocumentedItemsOnly to bDocumentedItemsOnly
+
+        Move sFolder to stLibrary.sAppSrcFolder
+
+        Get LibraryName sFolder to stLibrary.sName
+        Send Add_Data_From_Ctrl_File sFolder (&stLibrary) // works fine without it
+
+        Move stLibrary to gstLibraryBeingRead
+        Send ReadFolderRecursive of oFileFunctions sFolder "*" (&aFileData) 0 99 // 0 means files and folders, 1 means files only
+        Send CallbackFileData of oFileFunctions sFolder aFileData 1 (RefProc(_ReadPackage)) Self
+        Function_Return gstLibraryBeingRead
+    End_Function
+
+    Function ReadPackage String sFolder String sPackageName Boolean bDocumentedItemsOnly Returns tDFPackage
+        tWildCardEvalSequence[] aWildCardsPush aWildCards // Wildcard evaluation sequences for filenames
+        tDFLibrary stLibrary
+        Get paWildCards to aWildCardsPush
+        Get WildCardEvalSequence of oStringFunctions sPackageName to aWildCards[0]
+        Set paWildCards to aWildCards
+        Get ReadLibrary sFolder bDocumentedItemsOnly to stLibrary
+        Set paWildCards to aWildCardsPush
+        Function_Return stLibrary.aPackages[0]
+    End_Function
+
+End_Class // cSourceCodeReaderFunctions
+
+Object oSourceCodeReaderFunctions is a cSourceCodeReaderFunctions
+End_Object

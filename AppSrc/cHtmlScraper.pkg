@@ -1,0 +1,197 @@
+Use oHtmlParseFunctions.pkg
+
+Use UrlFunctions.pkg
+Use cHttpTransfer.pkg // cHttpTransfer class (DAW)
+
+Class cHtmlScraper is a cHttpTransfer
+    Procedure construct_object
+        Forward Send Construct_Object
+        Property String _psCacheDataSubFolder "HttpChache"
+        Property String _psCacheFolder
+        Property Integer piMaxRedirDepth 3
+    End_Procedure
+
+        Procedure _InitializeFolder // Was named InitializeFolder
+            String sFolder sErr
+            Boolean bCreated
+            Get VdfFolderPath of oFileFunctions VDF_FILELIST to sFolder
+            Get AppendPath of oFileFunctions sFolder (_psCacheDataSubFolder(Self)) to sFolder
+            If (FileExists(oFileFunctions,sFolder)=0) Begin
+                Get CreateFolderNew of oFileFunctions sFolder to bCreated
+                If (FileExists(oFileFunctions,sFolder)=0) Begin
+                    Move ("Could not create HTTP cache folder ("+sFolder+")") to sErr
+                    Error 312 sErr
+                End
+            End
+            Set _psCacheFolder to sFolder
+        End_Procedure
+
+    Procedure Set psCacheDataSubFolder String sValue
+        Set _psCacheDataSubFolder to sValue
+        Set _psCacheFolder to "" // This will make the ChacheFolder function re-calculate its value.
+    End_Procedure
+
+    Function psCacheFolder Returns String
+        String sFolder
+        Get _psCacheFolder to sFolder
+        If (sFolder="") Begin
+            Send _InitializeFolder
+            Get _psCacheFolder to sFolder
+        End
+        Function_Return sFolder
+    End_Function
+
+            Function ReadHeaders Returns tHtmlHeader[]
+                Integer iItem iMax iHeader
+                String sValue
+                tHtmlHeader[] aRval
+                Move 0 to iHeader
+                Move (SizeOfArray(aMsResponseHeaders)) to iMax
+                Decrement iMax
+                For iItem from 0 to iMax
+                    Get ResponseHeader aMsResponseHeaders[iItem].sTag 0 to sValue
+                    If (sValue<>"") Begin
+                        Move aMsResponseHeaders[iItem].sTag to aRval[iHeader].sName
+                        Move sValue to aRval[iHeader].sValue
+                        Increment iHeader
+                    End
+                Loop
+                Function_Return aRval
+            End_Function
+        
+        Function HeaderValue tHtmlHeader[] aHeaders String sTag Returns String
+            Integer iItem iMax
+            Move (Uppercase(sTag)) to sTag
+            Move (SizeOfArray(aHeaders)) to iMax
+            Decrement iMax
+            For iItem from 0 to iMax
+                If (sTag=Uppercase(aHeaders[iItem].sName)) ;
+                        Function_Return aHeaders[iItem].sValue
+            Loop
+            Function_Return ""
+        End_Function
+
+    Function FetchPage String sUrl String[] ByRef aVisitedUrls tHtmlDocument ByRef stDoc Returns Boolean
+        tUrl stUrl
+        Integer iTransferFlags iReqResult iRecursivenessDepthCheck
+        String sPath sErr sLoc
+        tHtmlHeader[] aHeaders
+        Boolean bRval
+        
+        Get piMaxRedirDepth to iRecursivenessDepthCheck
+        If (iRecursivenessDepthCheck=0) ;
+                Function_Return False // Max depth violation => call failed
+    
+        Get Decompose of oUrlFunctions sUrl to stUrl
+        Set psRemoteHost to stUrl.sHost
+        Set piRemotePort to stUrl.sPort
+        Set psUserName   to stUrl.sUser
+        Set psPassword   to stUrl.sPassword
+        
+        // Disable automatic redirect
+        Get peTransferFlags to iTransferFlags
+        Set peTransferFlags to (iTransferFlags ior ifNoAutoRedirect)
+        
+        // Figure out name of file in which to save the respond
+        Get AppendPath of oFileFunctions (psCacheFolder(Self)) "FetchPage.rsp" to sPath
+        Set psSaveAsFile to sPath
+
+        Get HTTPGetRequest stUrl.sPath to iReqResult
+
+        If (iReqResult<>0) Begin // Success
+            Get ReadHeaders to aHeaders
+
+            Get HeaderValue aHeaders "location" to sLoc
+            If (sLoc<>"") Begin // Redirection!
+                If (Lowercase(Left(sLoc,7))="http://") Begin // It's a completely new URL
+                    Move sLoc to sUrl
+                End
+                Else Begin // Öt's a modification of the existing URL
+                    Move sLoc to stUrl.sPath
+                    Get Compose of oUrlFunctions stUrl to sUrl
+                End
+                Set piMaxRedirDepth to (iRecursivenessDepthCheck-1)
+                Get FetchPage sUrl (&aVisitedUrls) (&stDoc) to bRval
+                Set piMaxRedirDepth to iRecursivenessDepthCheck
+                Function_Return bRval
+            End
+            Else Begin
+                Get ParseDocumentFromFile of oHtmlParserFunctions sPath to stDoc
+                Move aHeaders to stDoc.aHeaders
+                Move sUrl to stDoc.sUrl
+                // At this point we need ... what? Anything?
+            End
+            Function_Return True
+        End
+        Else Begin
+            Move ("HTTP request error. LastErrorCode: "+String(LastErrorCode(Self))) to sErr
+            Error 313 sErr
+            Function_Return False
+        End
+    End_Function         
+                             
+    //> Same as FetchPage but without the need for the "visited urls" parameter.
+    Function FetchPageSimple String sUrl tHtmlDocument ByRef stDoc Returns Boolean
+        Boolean bRval
+        String[] aDummy
+        Get FetchPage sUrl (&aDummy) (&stDoc) to bRval
+        Function_Return bRval
+    End_Function
+    
+    Procedure FetchSite String[] aUrls String[] ByRef sVisitedUrls tHtmlDocument[] ByRef aDocuments Integer iMaxSeconds
+        Integer iUrl
+        String sUrl
+        Move 0 to iUrl
+        While (iUrl<SizeOfArray(aUrls))
+
+        Loop
+    End_Procedure
+    
+    // **** Helper functions for extrating textual information from a string **********************
+                                               
+    // Returns the part of sText that occurs between (the first occurance of) sFrom and (the
+    // first occurance of) sTo.
+    Function ExtractSubstring String sText String sFrom String sTo Boolean bReplaceCrLf Returns String
+        Integer iPos
+        String sRval
+        Move (Pos(sFrom,sText)) to iPos
+        If (iPos or (Length(sFrom)=0)) Begin
+            Move (Remove(sText,1,iPos+length(sFrom)-1)) to sText
+            Move (Pos(sTo,sText)) to iPos
+            If iPos ;
+                    Move (Left(sText,iPos-1)) to sRval
+            Else If (Length(sTo)<>0) ;
+                    Move "" to sRval
+            Else ;
+                    Move sText to sRval
+        End
+        Else ;
+                Move "" to sRval
+        If bReplaceCrLf Begin
+            Move (Replaces(character(10),sRval," ")) to sRval
+            Move (Replaces(character(13),sRval," ")) to sRval
+        End
+        Function_Return (Replaces("  ",trim(sRval)," "))
+    End_Function
+
+    // Returns the item first occuring in sText
+    Function FirstSubstring String sText String[] aItems Returns String
+        Integer iPos iBestPos iBestItem iMax iItem
+        Move (SizeOfArray(aItems)-1) to iMax
+        Move 9999999 to iBestPos
+        Move -1 to iBestItem
+        For iItem from 0 to iMax
+            Move (pos(aItems[iItem],sText)) to iPos
+            If (iPos>0) Begin
+                If (iPos<iBestPos) Begin
+                    Move iPos to iBestPos
+                    Move iItem to iBestItem
+                End
+            End
+        Loop
+        If (iBestItem<>-1) ;
+                Function_Return aItems[iBestItem]
+        Function_Return ""
+    End_Function
+End_Class // cHtmlScraper
+

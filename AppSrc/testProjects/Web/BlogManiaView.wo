@@ -1,0 +1,145 @@
+Use cWebView.pkg
+Use cWebPanel.pkg
+Use cWebForm.pkg 
+Use cWebHtmlBox.pkg
+Use Web\cWebHtmlBoxSture.pkg
+Use cWebImage.pkg
+
+Object oBlogManiaView is a cWebView
+
+    Set piWidth to 0
+
+    Object oWebTopPanel is a cWebPanel
+        Set peRegion to prTop
+        
+        Object oButtonSample is a cWebHtmlBoxSture
+            Set piHeight to 50
+            Procedure OnBuildHtml
+                Send AddElement "h1" "The CKEditor Component"
+            End_Procedure
+            Procedure OnLoad
+                Forward Send OnLoad
+                Send RefreshContent
+            End_Procedure
+        End_Object
+
+    End_Object 
+
+    Object oWebMainPanel is a cWebPanel
+
+        Object oCanvasBox is a cWebHtmlBoxSture
+            Set pbFillHeight to True
+            Set pbShowBorder to True
+            Set psBackgroundColor to "#FAFAFA"
+            Set pbServerOnClick to True
+            Procedure OnBuildHtml
+                Send AddElement "div" ""
+                Send AddAttribute "id" "plumbcontainer1"
+//                Send AddElement "script" "alert('!');"
+//                Send AddElement "script" "document.getElementById('plumbcontainer1').onclick = Function ( e ) { alert( 'top: ' + e.target.top ); };"
+                Send AddAttribute "onclick" "diagramManager.click(event);"
+            End_Procedure
+            Procedure OnLoad
+                Forward Send OnLoad
+                Send RefreshContent
+            End_Procedure
+        End_Object
+
+    End_Object 
+
+    Object oWebLeftPanel is a cWebPanel
+        Set peRegion to prLeft
+        Set piWidth to 200
+        Set piColumnCount to 12
+//        Set piMinWidth to 180
+//        Set pbResizable to True
+        
+        
+        Object oCommands is a cWebGroup
+            Set psBackgroundColor to "#DDDDDD"
+            Object oLabel is a cWebLabel
+                Set psCaption to "Commands"
+                Set peAlign to alignCenter
+            End_Object
+
+            Object oSpacer3 is a cWebSpacer
+                Set piHeight to 20
+            End_Object
+
+            Object oFitToAreaBtn is a cWebButton
+                Set psCaption to "Fit to area"
+            
+                Procedure OnClick
+                End_Procedure
+            End_Object 
+
+        End_Object
+            
+        Object oSpacer4 is a cWebSpacer
+            Set piHeight to 20
+            Set pbFillHeight to True
+            Set piColumnSpan to 0
+        End_Object
+        Object oPoweredBy is a cWebImage
+            Set piColumnSpan to 0
+            Set piColumnIndex to 3
+            Set piHeight to 70
+            Set psUrl to "Images/PoweredByDataFlex.png"
+        End_Object
+    End_Object 
+
+    Object oWebRightPanel is a cWebPanel
+        Set peRegion to prRight
+        Set psBackgroundColor to "#DDDDDD"
+        Set piWidth to 300
+        Set piMinWidth to 200
+        Set pbRender to False
+        Set pbResizable to True
+        
+        Object oLabel is a cWebLabel
+            Set psCaption to "Property panel"
+        End_Object
+
+    End_Object 
+
+    Object oWebBottomPanel is a cWebPanel
+        Set peRegion to prBottom
+        Set psBackgroundColor to "#EEEEEE"
+        Set piColumnCount to 18
+        Set pbResizable to True
+        
+        Object oToggleLeftBtn is a cWebButton
+            Set psCaption to "Toggle left"
+            Set piColumnSpan to 2
+            Procedure OnClick
+                Boolean bState
+                WebGet pbRender of oWebLeftPanel to bState
+                WebSet pbRender of oWebLeftPanel to (not(bState))
+            End_Procedure
+        End_Object
+
+        Object oToggleTopBtn is a cWebButton
+            Set psCaption to "Toggle top"
+            Set piColumnIndex to 8
+            Set piColumnSpan to 2
+            Procedure OnClick
+                Boolean bState
+                WebGet pbRender of oWebTopPanel to bState
+                WebSet pbRender of oWebTopPanel to (not(bState))
+            End_Procedure
+        End_Object
+        
+        Object oToggleRightBtn is a cWebButton
+            Set psCaption to "Toggle right"    
+            Set piColumnIndex to 16
+            Set piColumnSpan to 2
+            Procedure OnClick
+                Boolean bState
+                WebGet pbRender of oWebRightPanel to bState
+                WebSet pbRender of oWebRightPanel to (not(bState))
+            End_Procedure
+        End_Object
+        
+    End_Object 
+
+End_Object

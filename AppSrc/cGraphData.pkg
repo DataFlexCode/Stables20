@@ -1,0 +1,889 @@
+Struct tgdAtomData
+    String[] aDims
+    Integer  iRecordCount // How many times did we hit this aDims combination during AddRecord operations?
+    Number[] aFacts
+    String[] aRecords
+End_Struct
+
+Struct tgdDataItem
+    Boolean bUsed
+    tgdAtomData[] aAtomData
+End_Struct
+
+Struct tgdFactColumn
+    String sLabel
+    String sRefName
+    Integer iFormatDecimals
+    String sUnit
+End_Struct
+
+Struct tgdDimColumn
+    String sLabel
+    String sRefName
+    String[]  aValues             // All values taken on by this dimension throughout the dataset.
+    // Display options (they influence the values returned by the CalculateDimValueStructure procedure)
+    Boolean bExpandAllKnownValues
+End_Struct
+
+Struct tgdGraphdata
+    String sTitle
+    tgdFactColumn[] aFactColumns
+    tgdDimColumn[] aDimColumns
+    Boolean bDateIndexed
+    Integer iDateGranularity //> DS_DAY=day, DS_WEEK=week, DS_MONTH=month, DS_QUARTER=quarter, DS_YEAR=year
+    Date dBase //> The earliest date that we can handle in the dataset. If left at 0 the date associated with the first data item added will assumed.
+    tgdDataItem[] aData
+End_Struct
+
+Struct tgdReduction
+    Integer iDateGranularity // DS_DAY=day, DS_WEEK=week, DS_MONTH=month, DS_QUARTER=quarter, DS_YEAR=year
+    Integer[] aiFactPermutation
+    Integer[] aiDimPermutation
+End_Struct
+
+Struct tgdDimValueStructure
+    String sValue
+    Integer iType // 0=Dim value, 1=Total, 2=Average
+    tgdDimValueStructure[] aNextLevelValues
+End_Struct
+
+//Struct tTSPresentationCell
+//    Integer iType // 0:Date header, 1..N
+//    String sValue
+//    Number nValue
+//End_Struct
+
+Class cGraphdataFunctions is a cObject
+
+//    Function DimensionNameToValue
+//    End_Function
+//
+//    Function FactNameToValue
+//    End_Function
+
+    Function DataItemFactTotals tgdDataItem stDataItem Returns Number[]
+        Integer iAtomMax iAtomItem
+        Integer iFactMax iFactItem
+        Number[] aTotals
+
+        If (not(stDataItem.bUsed)) Begin
+            Error DFERR_PROGRAM "DataItemFactTotals called with data item that is not 'bUsed'"
+        End
+
+        Move (SizeOfArray(stDataItem.aAtomData)-1) to iAtomMax
+        For iAtomItem from 0 to iAtomMax
+            Move (SizeOfArray(stDataItem.aAtomData[iAtomItem].aFacts)-1) to iFactMax
+            If (iFactMax>=SizeOfArray(aTotals)) Begin
+                Move (ResizeArray(aTotals,iFactMax+1)) to aTotals
+            End
+            For iFactItem from 0 to iFactMax
+                Move (aTotals[iFactItem]+stDataItem.aAtomData[iAtomItem].aFacts[iFactItem]) to aTotals[iFactItem]
+            Loop
+        Loop
+
+        Function_Return aTotals
+    End_Function
+
+    Function NewGraphdata tgdFactColumn[] aFactColumns ;
+                          tgdDimColumn[] aDimColumns  ;
+                          Integer  iDateGranularity ; //> DS_DAY=day, DS_WEEK=week, DS_MONTH=month, DS_QUARTER=quarter, DS_YEAR=year
+                          Date     dBase ; //> Datewise offset for aData indexing. Blank (or zero) means that this value is determined by first "record" that is added. The value represents the earliest date that we can handle in the dataset.
+                          Returns tgdGraphdata
+        tgdGraphdata stNew
+        Move aFactColumns     to stNew.aFactColumns
+        Move aDimColumns      to stNew.aDimColumns 
+        Move iDateGranularity to stNew.iDateGranularity
+        Move dBase            to stNew.dBase
+        Function_Return stNew
+    End_Function
+    
+                Function _CompareAtomDimensions tgdAtomData stVal1 tgdAtomData stVal2 Returns Integer
+                    Integer iIndex iMax
+                    Move (SizeOfArray(stVal1.aDims)-1) to iMax
+                    For iIndex from 0 to iMax
+                        If (stVal1.aDims[iIndex]<stVal2.aDims[iIndex]) Function_Return (LT)
+                        If (stVal1.aDims[iIndex]>stVal2.aDims[iIndex]) Function_Return (GT)
+                    Loop
+                    Function_Return (EQ)
+                End_Function
+            
+            // This function checks if a given combination of dimensions has already been
+            // encountered. If no such combination can be found it returns the next available
+            // index.
+
+            Function _FindDimensionIndex tgdDataItem[] aAtomData String[] aDims tgdDimColumn[] aDimDefinitions Returns Integer
+                Integer iIndex
+                tgdAtomData stSearchVal
+                Move aDims to stSearchVal.aDims
+                Move (SearchArray(stSearchVal,aAtomData,Self,GET__CompareAtomDimensions)) to iIndex
+                If (iIndex=-1) Begin
+                    Move (SizeOfArray(aAtomData)) to iIndex
+                End
+                Function_Return iIndex
+            End_Function
+            
+            Procedure _UpdateFacts tgdAtomData ByRef stAtomData Integer iDimensionIndex Number[] aFacts String[] aDims Integer iWeight
+                Integer iIndex iMax
+
+                If (SizeOfArray(stAtomData.aDims)=0) Begin
+                    Move aDims to stAtomData.aDims
+                End
+
+                If (stAtomData.iRecordCount=0) Begin
+                    Move aFacts to stAtomData.aFacts
+                    Move iWeight to stAtomData.iRecordCount
+                End
+                Else Begin
+                    Move (SizeOfArray(stAtomData.aFacts)-1) to iMax
+                    For iIndex from 0 to iMax
+                        Move (stAtomData.aFacts[iIndex]+aFacts[iIndex]) to stAtomData.aFacts[iIndex]
+                    Loop
+                    Move (stAtomData.iRecordCount+iWeight) to stAtomData.iRecordCount
+                End
+            End_Procedure
+
+            Procedure _UpdateDimValueLists tgdGraphdata ByRef stGraphdata String[] aDims
+                Integer iDimIndex iDimMax
+                Integer iValIndex
+                Move (SizeOfArray(aDims)-1) to iDimMax
+                For iDimIndex from 0 to iDimMax
+                    Move (SearchArray(aDims[iDimIndex],stGraphdata.aDimColumns[iDimIndex].aValues)) to iValIndex
+                    If (iValIndex=-1) Begin
+                        Move (SizeOfArray(stGraphdata.aDimColumns[iDimIndex].aValues)) to iValIndex
+                        Move aDims[iDimIndex] to stGraphdata.aDimColumns[iDimIndex].aValues[iValIndex]
+                    End
+
+                Loop
+            End_Procedure
+
+    Procedure OnAddRecord tgdAtomData ByRef stAtomData
+      // Could be used to add UUID to aRecords member of stAtomData.
+    End_Procedure
+
+    Procedure AddRecordDateIndex tgdGraphdata ByRef stGraphdata Integer iDateIndex Number[] aFacts String[] aDims Integer iOptRecordWeight
+        Integer iDimensionIndex iWeight
+        Date dNewBase
+        tgdDataItem[] aEmptyItems
+        
+        If (iDateIndex<0) Begin
+            // We can calculate the new base data right away
+            Get DateIndexStartDate of oDateFunctions stGraphdata.dBase iDateIndex stGraphdata.iDateGranularity to dNewBase
+            
+            // If we get a negative date index then we expand the
+            // data array to be able to represent the negative index.
+            Move (0-iDateIndex) to iDateIndex
+            Move (ResizeArray(aEmptyItems,iDateIndex)) to aEmptyItems
+            Move (AppendArray(aEmptyItems,stGraphdata.aData)) to stGraphdata.aData
+            Move dNewBase to stGraphdata.dBase
+            Move 0 to iDateIndex
+        End
+    
+        If (num_arguments>4) Begin
+            Move iOptRecordWeight to iWeight
+        End
+        Else Begin
+            Move 1 to iWeight
+        End
+
+        Send _UpdateDimValueLists (&stGraphdata) aDims
+        If (iDateIndex>=SizeOfArray(stGraphdata.aData)) Begin
+            Move 0 to iDimensionIndex
+        End
+        Else Begin
+            Get _FindDimensionIndex stGraphdata.aData[iDateIndex].aAtomData aDims stGraphdata.aFactColumns to iDimensionIndex
+        End
+        Move True to stGraphdata.aData[iDateIndex].bUsed
+        If (iDimensionIndex>=SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData)) Begin
+            Move (ResizeArray(stGraphdata.aData[iDateIndex].aAtomData,iDimensionIndex+1)) to stGraphdata.aData[iDateIndex].aAtomData
+        End
+        Send _UpdateFacts (&stGraphdata.aData[iDateIndex].aAtomData[iDimensionIndex]) iDimensionIndex aFacts aDims iWeight
+        Send OnAddRecord (&stGraphdata.aData[iDateIndex].aAtomData[iDimensionIndex])
+    End_Procedure
+    
+    Procedure AddRecord tgdGraphdata ByRef stGraphdata Date dDate Number[] aFacts String[] aDims Integer iOptRecordWeight
+        Integer iDateIndex iWeight
+
+        If (stGraphdata.bDateIndexed) Begin
+            If (Integer(dDate)=0) Begin
+                Error 424 "Zero date passed to _AddRecord procedure"
+            End
+    
+            If (Integer(stGraphdata.dBase)=0) Begin
+                Move dDate to stGraphdata.dBase
+            End
+            Get DateIndex of oDateFunctions stGraphdata.dBase dDate stGraphdata.iDateGranularity to iDateIndex
+        End
+        Else Begin
+            Move 0 to iDateIndex
+        End
+        
+        If (num_arguments>4) Begin
+            Move iOptRecordWeight to iWeight
+        End
+        Else Begin
+            Move 1 to iWeight
+        End
+
+        Send AddRecordDateIndex (&stGraphdata) iDateIndex aFacts aDims iWeight
+    End_Procedure
+
+    
+    Procedure SortGraphdata tgdGraphdata ByRef stGraphdata
+        Integer iIndex iMax
+        Move (SizeOfArray(stGraphdata.aData)-1) to iMax
+        For iIndex from 0 to iMax
+            Move (SortArray(stGraphdata.aData[iIndex].aAtomData,Self,GET__CompareAtomDimensions)) to stGraphdata.aData[iIndex].aAtomData
+        Loop
+    End_Procedure    
+    
+    // --- Reduction procedures ---------------
+    
+        Function _ValidateDateGranularityReduction Integer iOld Integer iNew Returns Boolean
+            If (iNew<iOld) Begin
+                Function_Return False
+            End
+            If (iOld=DS_WEEK) Begin
+                Function_Return False // Weeks can't be transformed to anything
+            End
+            Function_Return True
+        End_Function
+
+        Function _ValidateDimensionDependencies tgdGraphdata stGraphdata tgdReduction stReduction Returns Boolean
+            // It should not be possible to exclude a "super-dimension" without also
+            // exluding the sub-dimensions.
+            Function_Return True
+        End_Function
+        
+        Function _PermutateNumberArray Number[] aValues Integer[] aiPermutation Returns Number[]
+            Integer iIndex iMax iMaxValueIndex
+            Number[] aRval
+            Move (SizeOfArray(aiPermutation)-1) to iMax
+            Move (SizeOfArray(aValues)-1) to iMaxValueIndex
+            For iIndex from 0 to iMax
+                If (aiPermutation[iIndex]<=iMaxValueIndex) Begin
+                    Move aValues[aiPermutation[iIndex]] to aRval[iIndex]
+                End
+            Loop
+            Function_Return aRval    
+        End_Function
+
+        Function _PermutateStringArray String[] aValues Integer[] aiPermutation Returns String[]
+            Integer iIndex iMax iMaxValueIndex
+            String[] aRval
+            Move (SizeOfArray(aiPermutation)-1) to iMax
+            Move (SizeOfArray(aValues)-1) to iMaxValueIndex
+            For iIndex from 0 to iMax
+                If (aiPermutation[iIndex]<=iMaxValueIndex) Begin
+                    Move aValues[aiPermutation[iIndex]] to aRval[iIndex]
+                End
+            Loop
+            Function_Return aRval    
+        End_Function
+        
+        Function _PermutateFactColumnArray tgdFactColumn[] aValues Integer[] aiPermutation Returns tgdFactColumn[]
+            Integer iIndex iMax iMaxValueIndex
+            tgdFactColumn[] aRval
+            Move (SizeOfArray(aiPermutation)-1) to iMax
+            Move (SizeOfArray(aValues)-1) to iMaxValueIndex
+            For iIndex from 0 to iMax
+                If (aiPermutation[iIndex]<=iMaxValueIndex) Begin
+                    Move aValues[aiPermutation[iIndex]] to aRval[iIndex]
+                End
+            Loop
+            Function_Return aRval    
+        End_Function
+
+        Function _PermutateDimColumnArray tgdDimColumn[] aValues Integer[] aiPermutation Returns tgdDimColumn[]
+            Integer iIndex iMax iMaxValueIndex
+            tgdDimColumn[] aRval
+            Move (SizeOfArray(aiPermutation)-1) to iMax
+            Move (SizeOfArray(aValues)-1) to iMaxValueIndex
+            For iIndex from 0 to iMax
+                If (aiPermutation[iIndex]<=iMaxValueIndex) Begin
+                    Move aValues[aiPermutation[iIndex]] to aRval[iIndex]
+                End
+            Loop
+            Function_Return aRval
+        End_Function
+
+    Function GraphdataReduction tgdGraphdata stGraphdata tgdReduction stReduction Returns tgdGraphdata
+        Integer iItemIndex iItemMax
+        Integer iAtomIndex iAtomMax
+        Date dDate
+        Number[] aFacts
+        String[] aDims
+        tgdGraphdata stResult
+
+        // If the 'reduction' doesn't change anything the operation should be omitted. Insert check for that.
+
+        If (_ValidateDateGranularityReduction(Self,stGraphdata.iDateGranularity,stReduction.iDateGranularity)) Begin
+            If (_ValidateDimensionDependencies(Self,stGraphdata,stReduction)) Begin
+                
+                Move (SizeOfArray(stGraphdata.aData)-1) to iItemMax
+
+                // Initialise result parameter:
+                Move stGraphdata.dBase to stResult.dBase
+                Move stReduction.iDateGranularity to stResult.iDateGranularity
+                
+                // Transfer dimension columns:
+                Get _PermutateDimColumnArray stGraphdata.aDimColumns stReduction.aiDimPermutation to stResult.aDimColumns
+                // Transfer fact columns:
+                Get _PermutateFactColumnArray stGraphdata.aFactColumns stReduction.aiFactPermutation to stResult.aFactColumns
+                
+                // Transfer the data
+                For iItemIndex from 0 to iItemMax
+
+                    Get DateIndexStartDate of oDateFunctions stGraphdata.dBase iItemIndex stGraphdata.iDateGranularity to dDate
+                    
+                    Move (SizeOfArray(stGraphdata.aData[iItemIndex].aAtomData)-1) to iAtomMax
+                    For iAtomIndex from 0 to iAtomMax
+                        
+                        // Calculate reduced dimension values:
+                        Get _PermutateStringArray stGraphdata.aData[iItemIndex].aAtomData[iAtomIndex].aDims stReduction.aiDimPermutation to aDims
+                        
+                        // Calculate reduced fact values:
+                        Get _PermutateNumberArray stGraphdata.aData[iItemIndex].aAtomData[iAtomIndex].aFacts stReduction.aiFactPermutation to aFacts
+
+                        Send AddRecord (&stResult) dDate aFacts aDims
+                    Loop // iAtomIndex
+                Loop // iItemIndex
+            End
+        End
+        Send SortGraphdata (&stResult)
+        Function_Return stResult
+    End_Function
+
+        Function _FindFact_DimMatch String[] aDimValues1 String[] aDimValues2 Returns Boolean
+            Integer iMax iIndex
+            If (SizeOfArray(aDimValues1)=SizeOfArray(aDimValues2)) Begin
+                Move (SizeOfArray(aDimValues1)-1) to iMax
+                For iIndex from 0 to iMax
+                    If (aDimValues1[iIndex]<>aDimValues2[iIndex]) Begin
+                        Function_Return False    
+                    End
+                Loop
+                Function_Return True
+            End
+            Function_Return False
+        End_Function
+    
+    Function FindFact tgdGraphdata stGraphdata Integer iDateIndex String[] aDimValues Returns Number[]
+        Integer iAtomIndex iAtomMax
+        Number aFactValues
+        
+        If (iDateIndex>=0 and iDateIndex<SizeOfArray(stGraphdata.aData)) Begin
+            If (stGraphdata.aData[iDateIndex].bUsed) Begin
+                Move (SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData)-1) to iAtomMax
+                For iAtomIndex from 0 to iAtomMax
+                    If (_FindFact_DimMatch(Self,aDimValues,stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aDims)) Begin
+                        Function_Return stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aFacts
+                    End
+                Loop                
+            End
+        End
+        
+        Function_Return (ResizeArray(aFactValues,SizeOfArray(stGraphdata.aFactColumns)))
+    End_Function
+    
+            Function _FindDimValue tgdDimValueStructure[] aDimValueStructure String sDimValue Returns Integer
+                Integer iIndex iMax
+                Move (SizeOfArray(aDimValueStructure)-1) to iMax
+                For iIndex from 0 to iMax
+                    If (sDimValue=aDimValueStructure[iIndex].sValue) Begin
+                        Function_Return iIndex
+                    End
+                Loop
+                Function_Return -1
+            End_Function
+
+            Procedure _FindDimValueIndices tgdDimValueStructure[] aDimValueStructure String[] aDimValues Integer[] ByRef aIndices
+                Integer iIndex
+                If (SizeOfArray(aDimValues)<>0) Begin
+                    Get _FindDimValue aDimValueStructure aDimValues[0] to iIndex
+                    If (iIndex=-1) Begin
+                        Send IntegerPush of oStackFunctions -1 (&aIndices)
+                    End
+                    Else Begin
+                        Send IntegerPush of oStackFunctions iIndex (&aIndices)
+                        Send _FindDimValueIndices aDimValueStructure[iIndex].aNextLevelValues (RemoveFromArray(aDimValues,0))
+                    End
+                End
+            End_Procedure
+
+            Function _DimensionColumnIndex Integer[] aIndices Returns Integer
+                Integer iMax iIndex iValue iRval
+                Move 0 to iRval
+                Move (SizeOfArray(aIndices)-1) to iMax
+                For iIndex from 0 to iMax
+                    Move aIndices[iIndex] to iValue
+                    If (iValue=-1) Begin
+                        Function_Return -1
+                    End
+                    Else Begin
+                        Move (iRval+iValue+1) to iRval
+                    End
+                Loop
+                Function_Return (iRval-1)
+            End_Function
+
+        // This function calculates a column offset (vertical or horizontal) that corresponds to the set of dim values (aDimValues)
+        // when these are looked up in the dimension value structure. If the set of dim values cannot be looked up -1 is returned.
+        Function DimensionColumnIndex tgdDimValueStructure[] aDimValueStructure String[] aDimValues Returns Integer
+            Integer[] aIndices
+            Send _FindDimValueIndices aDimValueStructure aDimValues (&aIndices)
+            Function_Return (_DimensionColumnIndex(Self,aIndices))
+        End_Function
+
+            Function _DimensionValueRange tgdGraphdata stGraphdata Integer iDateIndex Integer iDim Returns String[]
+            End_Function
+
+            Function _Precond_CalculateDimValueStructure tgdGraphdata stGraphdata Integer iDimFirstYdim Returns Boolean
+                Function_Return (iDimFirstYdim<SizeOfArray(stGraphdata.aDimColumns))
+            End_Function
+
+
+            Procedure _AddDimValues tgdDimValueStructure[] ByRef aDimValueStructure String[] aDimValues
+                Integer iIndex // iNewIndex
+                If (SizeOfArray(aDimValues)<>0) Begin
+                    Get _FindDimValue aDimValueStructure aDimValues[0] to iIndex
+                    If (iIndex=-1) Begin
+                        Move (SizeOfArray(aDimValueStructure)) to iIndex
+                        Move aDimValues[0] to aDimValueStructure[iIndex].sValue // Create
+                    End
+                    Send _AddDimValues (&aDimValueStructure[iIndex].aNextLevelValues) (RemoveFromArray(aDimValues,0)) //  (StringTopDrop(oStackFunctions,aDimValues))
+                End
+            End_Procedure
+
+
+        // iDimFirstYdim // Index of first dimension to be displayed in horizontal direction. Determines which dimensions goes horizontal and vertical
+        Procedure CalcDimValueStructureDateIndex tgdGraphdata stGraphdata Integer iDateIndex Integer iDimFirstYdim tgdDimValueStructure[] ByRef aXvalues tgdDimValueStructure[] ByRef aYvalues
+            Integer iX1 iX2 iY1 iY2
+            Integer iIndex iMax
+            String[] aDims
+            If (_Precond_CalculateDimValueStructure(Self,stGraphdata,iDimFirstYdim)) Begin
+
+                Move 0                                      to iX1
+                Move (iDimFirstYdim-1)                      to iX2
+                Move iDimFirstYdim                          to iY1
+                Move (SizeOfArray(stGraphdata.aDimColumns)-1) to iY2
+
+                Move (SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData)-1) to iMax
+                For iIndex from 0 to iMax
+                    Move stGraphdata.aData[iDateIndex].aAtomData[iIndex].aDims to aDims
+                    Send _AddDimValues (&aXvalues) (CopyArray(aDims,iX1,iX2)) // Vertical dimensions
+                    Send _AddDimValues (&aYvalues) (CopyArray(aDims,iY1,iY2)) // Horizontal dimensions
+                Loop
+            End
+            Else Begin
+                Error 242 "Illegal dimension divider (between hor/ver)"
+            End
+        End_Procedure
+
+        Procedure CalcDimValueStructure tgdGraphdata stGraphdata Boolean bTimeDownwards Integer iDimFirstYdim tgdDimValueStructure[] ByRef aXvalues tgdDimValueStructure[] ByRef aYvalues
+            Integer iDateIndex iDateIndexMax
+            tgdDimValueStructure[] aXvaluesNew aYvaluesNew
+            Move (ResizeArray(aXvalues,0)) to aXvalues
+            Move (ResizeArray(aYvalues,0)) to aYvalues
+            If (bTimeDownwards) Begin
+//                Move (InsertInArray())
+            End
+            Else Begin
+            End
+            If (_Precond_CalculateDimValueStructure(Self,stGraphdata,iDimFirstYdim)) Begin
+                Move (SizeOfArray(stGraphdata.aData)-1) to iDateIndexMax
+                For iDateIndex from 0 to iDateIndexMax
+                    If (bTimeDownwards) Begin
+                    End
+                    Else Begin
+
+                    End
+                Loop
+            End
+            Else Begin
+                Error 243 "Illegal dimension divider (between hor/ver)"
+            End
+        End_Procedure
+
+//    Function _HorizontalDimValues tgdGraphdata stGraphdata tTSDisplayInfo stDisplay Returns String[]
+//        Integer iItemIndex iItemMax iAtomIndex iAtomMax
+//        String asDims 
+//        Move (SizeOfArray(stGraphdata.aData)-1) to iItemMax
+//        For iItemIndex from 0 to iItemMax
+//            Move (SizeOfArray(stGraphdata.aData[iItemIndex].aAtomData)-1) to iAtomMax
+//            For iAtomIndex from 0 to iAtomMax
+//
+//            Loop
+//        Loop
+//    End_Function
+//
+//    Function _ColumnHeaderStructure tgdDataItem stGraphdata tTSDisplayInfo stDisplayInfo Returns tgdDimValueStructure[]
+//        tgdDimValueStructure[] aValueStructure
+//        Integer iIndex iMax
+//        Move (SizeOfArray(stDisplayInfo.aDimY)-1) to iMax
+//        For iIndex from 0 to iMax
+//        Loop
+//    End_Function
+//
+//    Procedure CallBack tgdGraphdata stGraphdata tTSDisplayInfo stDisplay Integer hMsg Integer hObj
+//        Integer iItemIndex iItemMax iAtomIndex iAtomMax
+//
+//        Move (SizeOfArray(stGraphdata.aData)-1) to iItemMax
+//        For iItemIndex from 0 to iItemMax
+//            Move (SizeOfArray(stGraphdata.aData[iItemIndex].aAtomData)-1) to iAtomMax
+//            For iAtomIndex from 0 to iAtomMax
+//            Loop
+//        Loop
+//    End_Procedure
+//
+//    Struct tTSCell
+//        Boolean bTopHeader
+//        Boolean bLeftHeader
+//        String sValue
+//    End_Struct
+//
+//    Function CompleteCellLayout tgdGraphdata stGraphdata Integer iXYDimDivider Returns tTSCell[]
+//    End_Function
+//
+
+//    Procedure HandleCell Integer iDateIndex String sDateLabel String[] aDimensions String[] aFacts
+
+    Procedure CallBack tgdGraphdata stGraphdata Integer hMsg Integer hObj
+        Integer iDateIndex iDateIndexMax
+        Integer iAtomIndex iAtomIndexMax
+
+        Move (SizeOfArray(stGraphdata.aData)-1) to iDateIndexMax
+        For iDateIndex from 0 to iDateIndexMax
+            If (stGraphdata.aData[iDateIndex].bUsed) Begin
+                Move (SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData)-1) to iAtomIndexMax
+                For iAtomIndex from 0 to iAtomIndexMax
+                    Send hMsg of hObj iDateIndex ;
+                            (DateIndexLabel(oDateFunctions,stGraphdata.dBase,iDateIndex,stGraphdata.iDateGranularity)) ;
+                            (stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aDims) ;
+                            (stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aFacts) 
+                Loop
+            End
+        Loop
+    End_Procedure
+    
+    //> Merge source into target. MergeGraphData expects identical number
+    //> of facts and dimensions
+    Procedure MergeGraphData tgdGraphdata stSource tgdGraphdata ByRef stTarget
+        Integer iDataItem iDataMax
+        Integer iAtomItem iAtomMax
+        Date dValue
+        tgdAtomData stAtom
+        Move (SizeOfArray(stSource.aData)-1) to iDataMax
+        For iDataItem from 0 to iDataMax
+            If (stSource.aData[iDataItem].bUsed) Begin
+                Move (SizeOfArray(stSource.aData[iDataItem].aAtomData)-1) to iAtomMax
+                Get DateIndexStartDate of oDateFunctions stSource.dBase iDataItem stSource.iDateGranularity to dValue
+                For iAtomItem from 0 to iAtomMax
+                    Move stSource.aData[iDataItem].aAtomData[iAtomItem] to stAtom
+                    Send AddRecord (&stTarget) dValue stAtom.aFacts stAtom.aDims stAtom.iRecordCount
+                Loop
+            End
+        Loop
+    End_Procedure
+
+    //> Query3 uses this when keeping track of active graph data collectors.
+    Procedure UnstackGraphdata tgdGraphdata[] ByRef aGraphData
+        Integer iSize
+        Move (SizeOfArray(aGraphData)) to iSize
+        If (iSize>=2) Begin
+            Send MergeGraphData aGraphData[iSize-1] (&aGraphData[iSize-2])
+            Move (ResizeArray(aGraphData,iSize-1)) to aGraphData
+        End
+        Else Begin
+            Move (ResizeArray(aGraphData,0)) to aGraphData
+        End
+    End_Procedure
+    
+    Procedure TestWritefile tgdGraphdata stGraphdata //Integer iFirstDateIndex Integer iLastDateIndex Integer iFirstHorizontalDimIndex Boolean bHorizontalTime
+        String sOutputFile
+        Integer iChannel
+        Integer iDateIndex iDateIndexMax
+        Integer iAtomIndex iAtomIndexMax
+        Integer iDimIndex iDimIndexMax
+        Integer iFactIndex iFactIndexMax
+
+        Get VdfFolderPath of oFileFunctions VDF_FILELIST to sOutputFile
+        Get AppendPath of oFileFunctions sOutputFile "GraphdataTest.txt" to sOutputFile
+        Get AppendOutput of oFileFunctions sOutputFile to iChannel
+
+        If (iChannel>=0) Begin
+            
+            Writeln channel iChannel ("------ Graphdata: "+stGraphdata.sTitle+" ----------")
+            
+            Move (SizeOfArray(stGraphdata.aData)-1) to iDateIndexMax
+            For iDateIndex from 0 to iDateIndexMax
+                If (stGraphdata.aData[iDateIndex].bUsed) Begin
+                    // Print date-header:
+                    Writeln channel iChannel (DateIndexLabel(oDateFunctions,stGraphdata.dBase,iDateIndex,stGraphdata.iDateGranularity))
+
+                    Move (SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData)-1) to iAtomIndexMax
+                    For iAtomIndex from 0 to iAtomIndexMax
+
+                        Move (SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aDims)-1) to iDimIndexMax
+                        For iDimIndex from 0 to iDimIndexMax
+                            Write channel iChannel stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aDims[iDimIndex]
+                            If (iDimIndex<>iDimIndexMax) Begin
+                                Write channel iChannel "; "
+                            End
+                        Loop
+                        Write channel iChannel ": "
+
+                        Move (SizeOfArray(stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aFacts)-1) to iFactIndexMax
+                        For iFactIndex from 0 to iFactIndexMax
+                            Write channel iChannel stGraphdata.aData[iDateIndex].aAtomData[iAtomIndex].aFacts[iFactIndex]
+                            If (iFactIndex<>iFactIndexMax) Begin
+                                Write channel iChannel "; "
+                            End
+                        Loop
+                        Writeln channel iChannel ""
+
+                    Loop
+                End
+
+            Loop
+            Send CloseOutput of oFileFunctions iChannel
+#IFNDEF Is$WebApp // If Windows application
+            Send NotePad of oFileFunctions sOutputFile
+#ENDIF
+        End
+    End_Procedure
+
+End_Class
+
+Object oGraphdataFunctions is a cGraphdataFunctions
+End_Object
+
+Struct tgdValueSource
+    Integer hGet
+    Integer iTable  // If iTable=0 iColumn will be a function to call
+    Integer iColumn
+End_Struct
+
+Class cGraphdataCapturer is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property Integer piDateGranularity DS_DAY // DS_DAY=day, DS_WEEK=week, DS_MONTH=month, DS_QUARTER=quarter, DS_YEAR=year
+        Property tgdFactColumn[]  _paFactColumns
+        Property tgdDimColumn[]   _paDimColumns
+        Property tgdValueSource[] _paFactSources
+        Property tgdValueSource[] _paDimSources
+        Property tgdValueSource   _pstDateSource
+    End_Procedure
+
+    Procedure OnDefineGraphdata
+    End_Procedure
+
+    Procedure UpdateGraphdataDefinition
+        tgdValueSource stEmpty
+        Set piDateGranularity to DS_DAY // DS_DAY=day, DS_WEEK=week, DS_MONTH=month, DS_QUARTER=quarter, DS_YEAR=year
+        Set _pstDateSource to stEmpty
+        Set _paFactColumns to (ResizeArray(_paFactColumns(Self),0))
+        Set _paDimColumns  to (ResizeArray(_paDimColumns(Self),0))
+        Set _paFactSources to (ResizeArray(_paFactSources(Self),0))
+        Set _paDimSources  to (ResizeArray(_paDimSources(Self),0))
+        Send OnDefineGraphdata
+    End_Procedure
+
+    Procedure Set DateSource Integer iTable Integer iColumn
+        tgdValueSource stDateSource
+//        Move (iTable=0) to stDateSource.bVirtualColumn
+        Move iTable to stDateSource.iTable
+        Move iColumn to stDateSource.iColumn
+        Set _pstDateSource to stDateSource
+    End_Procedure
+
+    Procedure AddFactColumn String sRefName String sLabel Integer iDecimals String sUnit 
+        tgdFactColumn stFact
+        tgdFactColumn[] aFactColumns
+        Move sRefName to stFact.sRefName
+        Move iDecimals to stFact.iFormatDecimals
+        Move sUnit to stFact.sUnit
+        Get _paFactColumns to aFactColumns
+        Move stFact to aFactColumns[SizeOfArray(aFactColumns)]
+        Set _paFactColumns to aFactColumns
+    End_Procedure
+
+    Procedure Set FactSource Integer iTable Integer iColumn
+        Integer iIndex
+        tgdValueSource[] aSources
+        tgdFactColumn[] aFactColumns
+        Get _paFactColumns to aFactColumns
+        Get _paFactSources to aSources
+        Move (SizeOfArray(aFactColumns)-1) to iIndex
+//        Move (iTable=0) to aSources[iIndex].bVirtualColumn
+        Move iTable to aSources[iIndex].iTable
+        Move iColumn to aSources[iIndex].iColumn
+        Set _paFactSources to aSources
+    End_Procedure
+
+    Procedure AddDimColumn String sRefName String sLabel
+        Integer iIndex
+        tgdValueSource stSource
+        tgdDimColumn[] aDimColumns
+        Get _paDimColumns to aDimColumns
+        Move (SizeOfArray(aDimColumns)) to iIndex
+        Move sRefName to aDimColumns[iIndex].sRefName
+        Move sLabel to aDimColumns[iIndex].sLabel
+        Set _paDimColumns to aDimColumns
+    End_Procedure
+
+    Procedure Set DimSource Integer iTable Integer iColumn
+        Integer iIndex
+        tgdValueSource[] aSources
+        tgdDimColumn[] aDimColumns
+        Get _paDimColumns to aDimColumns
+        Get _paDimSources to aSources
+        Move (SizeOfArray(aDimColumns)-1) to iIndex
+//        Move (iTable=0) to aSources[iIndex].bVirtualColumn
+        Move iTable to aSources[iIndex].iTable
+        Move iColumn to aSources[iIndex].iColumn
+        Set _paDimSources to aSources
+    End_Procedure
+
+    Procedure AddRecordFromBuffer tgdGraphdata ByRef stGraphdata
+        Integer iMax iIndex
+        Date dDate
+        String sDim
+        Number[] aFacts
+        String[] aDims
+        tgdValueSource[] aFactSources
+        tgdValueSource[] aDimSources
+        tgdValueSource stSource
+
+        Get _paFactSources to aFactSources
+        Move (SizeOfArray(aFactSources)-1) to iMax
+        For iIndex from 0 to iMax
+            Move aFactSources[iIndex] to stSource
+            If (stSource.iTable<>0) Begin
+                Get_Field_Value stSource.iTable stSource.iColumn to aFacts[iIndex]
+            End
+            Else Begin
+                Get stSource.iColumn to aFacts[iIndex]
+            End
+        Loop
+        Get _paDimSources to aDimSources
+        Move (SizeOfArray(aDimSources)-1) to iMax
+        For iIndex from 0 to iMax
+            Move aDimSources[iIndex] to stSource
+            If (stSource.iTable<>0) Begin
+                Get_Field_Value stSource.iTable stSource.iColumn to sDim
+                Move (Rtrim(sDim)) to aDims[iIndex]
+            End
+            Else Begin
+                Get stSource.iColumn to aDims[iIndex]
+            End
+        Loop
+
+        Get _pstDateSource to stSource
+        If (stSource.iTable<>0) Begin
+            Get_Field_Value stSource.iTable stSource.iColumn to dDate
+        End
+        Else Begin
+            Get stSource.iColumn to dDate
+        End
+        Send AddRecord of oGraphdataFunctions (&stGraphdata) dDate aFacts aDims
+    End_Procedure
+
+    Procedure AddRecord tgdGraphdata ByRef stGraphdata Date dDate Number[] aFacts String[] aDims
+        Send AddRecord of oGraphdataFunctions (&stGraphdata) dDate aFacts aDims 
+    End_Procedure
+
+    Function NewGraphdata Date    dBase ; //> Date offset for aData indexing. Blank (or zero) means that this value is determined by first "record" that is added. The value represents the earliest date that we can handle in the dataset.
+                          Returns tgdGraphdata
+        tgdGraphdata stNew
+        Get NewGraphdata of oGraphdataFunctions (_paFactColumns(Self)) ;
+                                                (_paDimColumns(Self)) ;
+                                                (piDateGranularity(Self)) ;
+                                                dBase to stNew
+        Function_Return stNew
+    End_Function
+
+    Procedure SortGraphdata tgdGraphdata ByRef stGraphdata
+        Send SortGraphdata of oGraphdataFunctions (&stGraphdata)
+    End_Procedure
+End_Class
+
+
+//                 2007-01  2007-02  2007-03  2007-04  2007-06
+//                                                                                              2007-01  2007-02  2007-03
+// AE Sture Aps               16,50     1,75                                       AE
+// AE VD-Kbh                  65,75   128,00                                         Sture ApS             16,50     1,75
+//                         -------- --------                                         VD-Kbh                65,75   128,00
+// AE                        ###,##   ###,##                                       GS
+//                                                                                   Sture ApS              2,00     9,50
+// GS Sture Aps                2,00     9,50                                         VD-Kbh       90,25    50,50    93,00
+// GS VD-Kbh         90,25    50,50    93,00                                       JB
+//                -------- -------- --------                                         DSV         108,00    99,50
+// GS               ###,##   ###,##   ###,##                                         Sture ApS    28,00    28,00
+//                                                                                 JK
+// JB  DSV          108,00    99,50                                                  VD-Kbh       73,00    78,75
+// JB  Sture Aps     28,00    28,00                                                JKA
+//                -------- --------                                                  Dantek       25,50    19,50
+// JB               ###,##   ###,##                                                  Sture ApS    28,00    19,00
+//                                                                                   VD-Kbh       82,00    87,00
+//-----------------------------------                                              LBC
+//                                                                                   Marselis     28,00    43,50
+//                -------- --------                                                MJP
+// JK               ###,##   ###,##                                                  VD-Kbh       74,00
+//                                                                                 SBA
+// JKA Dantek        25,50    19,50                                                  Marselis     46,75    42,75
+// JKA Sture Aps     28,00    19,00
+// JKA VD-Kbh        82,00    87,00
+//                -------- --------
+// JKA              ###,##   ###,##
+//
+// LBC Marselis      28,00    43,50
+//                -------- --------
+// LBC              ###,##   ###,##
+//
+// MJP VD-Kbh        74,00
+//                --------
+// MJP              ###,##
+//
+// SBA Marselis      46,75    42,75
+//                -------- --------
+// LBC              ###,##   ###,##
+//
+//                ======== ======== ========
+//                  ###,##   ###,##   ###,##
+
+
+
+//            DSV  Dantek  Marselis  Sture Aps  VD-Kbh
+// 2007-01
+//  GS                                           90,25 | ###,##
+//  JB     108,00                        28,00         | ###,##
+//  JK                                   56,50   73,00 | ###,##
+//  JKA             25,50                28,00   82,00 | ###,##
+//  LBC                       28,00                    | ###,##
+//  MJP                                          74,00 | ###,##
+//  SBA                       46,75                    | ###,##
+//        ------- -------  --------    ------- ------- |-------
+//         ###,##  ###,##   ####,##     ###,##  ###,## |####,##
+// 2007-02
+//  AE                                    1,75  128,00 | ###,##
+//  GS                                    2,00   50,50 | ###,##
+//  JB      99,50                        28,00         | ###,##
+//  JK                                   56,50   73,00 | ###,##
+//  JKA             25,50                28,00   82,00 | ###,##
+//  LBC                       28,00                    | ###,##
+//  SBA                       46,75                    | ###,##
+//        ------- -------  --------    ------- ------- |-------
+//         ###,##  ###,##   ####,##     ###,##  ###,## |####,##
+//
+//
+//  Sture Andersen
+//
+//
+//           -Reg-- -Norm-
+//  2010-01  135.00
+//  2010-02  120.50
+//  2010-03  122.00
+//
+//
+//
+//

@@ -1,0 +1,408 @@
+﻿//> This package provides a means for generating Excel documents from within your DF application.
+//>
+//> It's mechanism is based on the cComScriptControl that is present on every machine. The Studio
+//> generates 600 lines for this control compared to the 60000 that is generated when using the
+//> native Excel control.
+//>
+//> To open Excel and initiate a new document I write:
+//>
+//> <code>
+//>  Send ComExecuteStatement  'Set objExcel = CreateObject("Excel.Application")'
+//>  Send ComExecuteStatement 'objExcel.Visible = True'
+//>  Send ComExecuteStatement 'objExcel.Workbooks.Add'
+//> </code>
+//>
+//> and from then on you can do anything a spreadsheet can do. Everything that can be recorded in a macro in Excel can be made to happen from within my Object simply by copying the VBA macro code into my program (almost).
+//>
+//> My procedure to set a value for instance looks like this:
+//>
+//> <code>
+//>  Procedure Set CellValue Integer iRow Integer iCol String sVal
+//>    Send ComExecuteStatement ('objExcel.Cells(' + String(iRow) + ',' + String(iCol) + ').Value="' + sVal+'"')
+//>  End_Procedure
+//> </code>
+//>
+//> As can be seen, all contact with Excel is done through the ComExecuteStatement method. It is
+//> therefore easy to change the class into writing these instructions to a file instead of executing
+//> them on the Excel engine. One can therefore write a VBA file that when "executed" on a different
+//> PC (from a browser for example) with Excel installed, it will unfold the excel document intented.
+//> But on the PC that is writing this script-file it happens without the need for Excel to be installed
+//> at all. This is of benefit on a web server where you would rather not install word or excel.
+//>
+//> pkg.doc.end
+
+Use RgbFunctions.pkg
+Use StringFunctions.pkg
+
+Use ComScriptControl\cComScriptControl.pkg
+
+
+Struct tExcelCursor
+    Integer iRow
+    Integer iCol
+    Integer iGotoColumnOnNewRow // on CursorCarriageReturn if iAdvanceDirection is 0 (right)
+    Integer iGotoRowOnNewColumn // on CursorCarriageReturn if iAdvanceDirection is 1 (down)
+    Integer iAdvanceDirection// 0=right, 1=down
+End_Struct
+
+Class cExcelScriptor is a cComScriptControl
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property Boolean pbExcelVisible  True
+        
+        Property Integer piSequentialChannel     -1 // file must be opened binary!!
+        Property Boolean pbComControlEnabledState True
+    End_Procedure
+    
+    Procedure ComExecuteStatement String llStatement
+        Integer iChannel
+        If (pbComControlEnabledState(Self)) Begin
+            Forward Send ComExecuteStatement llStatement
+        End
+        Get piSequentialChannel to iChannel
+        If (iChannel>=0) Begin
+            Write channel iChannel (Utf8ToAnsi(llStatement))
+            Write (Character(10))
+        End
+    End_Procedure
+    
+    Procedure NewExcelApp Boolean bInitiateNewSheet 
+        String[] aStatements
+        Handle hHandle
+        Delegate Get Window_Handle to hHandle
+        Set ComSitehWnd to hHandle
+        Set ComLanguage to "VBScript"
+        Set ComAllowUI to True
+//        Send ComExecuteStatement ('Set objExcel = CreateObject("Excel.Application")' + Character(10) + 'objExcel.Visible = True')
+
+        Send AppendStatement (&aStatements) ('Set objExcel = CreateObject("Excel.Application")')
+        If (pbExcelVisible(Self)) Begin
+            Send AppendStatement (&aStatements) ('objExcel.Visible = True')
+        End
+        Else Begin
+            Send AppendStatement (&aStatements) ('objExcel.Visible = False')
+        End
+        If (bInitiateNewSheet) Begin
+            Send AppendStatement (&aStatements) ('objExcel.Workbooks.Add')
+        End
+
+//        Send AppendStatement (&aStatements) 'Set ActiveSheet=objExcel.ActiveSheet'
+//        Send AppendStatement (&aStatements) 'Set Selection=objExcel.Selection'
+
+//        Send AppendStatement (&aStatements) 'Function Cells(arg1, arg2)'
+//        Send AppendStatement (&aStatements) '  Cells=objExcel.Cells(arg1,arg2)'
+//        Send AppendStatement (&aStatements) 'End Function'
+        
+        Send ComExecuteStatement (JoinString(oStringFunctions,aStatements,Character(10),0,0))
+    End_Procedure
+    
+    Function OpenExcelSheet String sExcelFile Returns Boolean
+        Send ComExecuteStatement ('objExcel.Workbooks.Open "'+sExcelFile+'"')
+    End_Function
+
+    Function NewCursor Integer iRow Integer iCol Integer iAdvanceDirection Returns tExcelCursor
+        tExcelCursor strCursor
+        Move (iRow max 1) to strCursor.iRow
+        Move (iCol max 1) to strCursor.iCol
+        Move strCursor.iRow to strCursor.iGotoRowOnNewColumn
+        Move strCursor.iCol to strCursor.iGotoColumnOnNewRow
+        Move iAdvanceDirection to strCursor.iAdvanceDirection
+        Function_Return strCursor
+    End_Function
+    
+    Procedure CursorAdvance tExcelCursor ByRef strCursor Integer iCells
+        If (strCursor.iAdvanceDirection=0) Begin // Advance right
+            Move (strCursor.iCol+iCells) to strCursor.iCol
+        End
+        Else If (strCursor.iAdvanceDirection=1) Begin // Advance down
+            Move (strCursor.iRow+iCells) to strCursor.iRow 
+        End
+    End_Procedure
+    
+    Procedure CursorMoveRelative tExcelCursor ByRef strCursor Integer iRow Integer iCol
+        Move (strCursor.iRow+iRow) to strCursor.iRow
+        Move (strCursor.iCol+iCol) to strCursor.iCol
+    End_Procedure
+    
+    Procedure CursorMoveAbsolute tExcelCursor ByRef strCursor Integer iRow Integer iCol
+        Move iRow to strCursor.iRow
+        Move iCol to strCursor.iCol
+    End_Procedure
+    
+    Function CursorOffset tExcelCursor strCursor Integer iRowOffset Integer iColOffset Returns tExcelCursor
+        Move (strCursor.iRow+iRowOffset) to strCursor.iRow
+        Move (strCursor.iCol+iColOffset) to strCursor.iCol
+        Function_Return strCursor
+    End_Function
+
+    Procedure CursorSetValue tExcelCursor ByRef strCursor String sValue
+        Set CellValue strCursor.iRow strCursor.iCol to sValue
+        Send CursorAdvance (&strCursor) 1
+    End_Procedure
+    
+    Procedure CursorSetValueZeroSuppress tExcelCursor ByRef strCursor String sValue
+        If (sValue="0") Begin
+            Move "" to sValue
+        End
+        Send CursorSetValue (&strCursor) sValue
+    End_Procedure
+    
+    Procedure CursorCarriageReturn tExcelCursor ByRef strCursor
+        If (strCursor.iAdvanceDirection=0) Begin // Right
+            Increment strCursor.iRow
+            Move strCursor.iGotoColumnOnNewRow to strCursor.iCol
+        End
+        Else Begin // Down
+            Increment strCursor.iCol
+            Move strCursor.iGotoRowOnNewColumn to strCursor.iRow
+        End
+    End_Procedure
+    
+    
+    Procedure Set CellValue Integer iRow Integer iCol String sVal
+        Move (Replaces('"',sVal,"'")) to sVal
+        Send ComExecuteStatement ('objExcel.Cells(' + String(iRow) + ',' + String(iCol) + ').Value="' + sVal+'"')
+    End_Procedure
+    
+    Function CellValue Integer iRow Integer iCol Returns String
+        String sExpression sValue
+        Move ("objExcel.Cells(" + String(iRow)+ "," +String(iCol)+ ").Value") to sExpression
+        Get ComEval sExpression to sValue
+        Function_Return sValue
+    End_Function
+
+    Procedure AddTextBox Number nX1 Number nY1 Number nX2 Number nY2 String sText Integer iColor
+        String sStatement
+        Move (Replaces('"',sText,"'")) to sText
+        Move 'objExcel.ActiveSheet.Shapes.AddTextbox(1, ' to sStatement
+        Move (sStatement+String(nX1)+', '+String(nY1)+', '+String(nX2)+', '+String(nY2)+' ).Select') to sStatement
+        Send ComExecuteStatement sStatement
+        Move ('objExcel.Selection.ShapeRange(1).TextFrame2.TextRange.Characters.Text = "'+sText+'"') to sStatement
+        Move (Replaces(Character(13),sStatement,'" & Chr(13) & "')) to sStatement
+        Send ComExecuteStatement sStatement
+    End_Procedure
+    
+    Procedure _CalcInterval Integer ByRef iItem1 Integer iAdditionalItems Integer ByRef iItem2
+        If (iAdditionalItems>=0) Begin
+            Move (iItem1+iAdditionalItems) to iItem2
+        End
+        Else Begin
+            Move iItem1 to iItem2
+            Move (iItem1+iAdditionalItems) to iItem1
+        End
+        If (iItem1<1) Begin
+            Error DFERR_PROGRAM "Illegal range selection in Excel automation"
+        End
+    End_Procedure
+
+    // About excel selections: http://support.microsoft.com/kb/291308
+    
+    Procedure SelectRows Integer iRow1 Integer iAdditionalRows
+        Integer iRow2
+        String sStatement
+        Send _CalcInterval (&iRow1) iAdditionalRows (&iRow2)
+        If (iAdditionalRows=0) Begin
+            Move ('objExcel.ActiveSheet.Rows('+String(iRow1)+').Select') to sStatement
+        End
+        Else Begin
+            Move ('objExcel.ActiveSheet.Rows('+String(iRow1)+','+String(iRow2)+').Select') to sStatement
+        End
+        Send ComExecuteStatement sStatement
+    End_Procedure
+
+    Procedure SelectColumns Integer iCol1 Integer iAdditionalColumns
+        Integer iCol2
+        String sStatement
+        Send _CalcInterval (&iCol1) iAdditionalColumns (&iCol2)
+        If (iAdditionalColumns=0) Begin
+            Move ('objExcel.ActiveSheet.Columns('+String(iCol1)+').Select') to sStatement
+        End
+        Else Begin
+            Move ('objExcel.ActiveSheet.Columns('+String(iCol1)+','+String(iCol2)+').Select') to sStatement
+        End
+        Send ComExecuteStatement sStatement
+    End_Procedure
+    
+    Procedure SelectRange Integer iRow1 Integer iCol1 Integer iAdditionalRows Integer iAdditionalColumns
+        Integer iRow2 iCol2
+        String sStatement
+        Send _CalcInterval (&iRow1) iAdditionalRows (&iRow2)
+        Send _CalcInterval (&iCol1) iAdditionalColumns (&iCol2)
+        If (iAdditionalColumns=0 and iAdditionalRows=0) Begin
+            Move ('objExcel.ActiveSheet.Cells('+String(iRow1)+','+String(iCol1)+').Select') to sStatement
+        End
+        Else Begin
+            Move ('objExcel.ActiveSheet.Range(objExcel.Cells('+String(iRow1)+','+String(iCol1)+'),objExcel.Cells('+String(iRow2)+','+String(iCol2)+')).Select') to sStatement
+        End
+        Send ComExecuteStatement sStatement
+    End_Procedure
+    
+    Procedure SelectCell Integer iRow Integer iCol
+        Send SelectRange iRow iCol 0 0
+    End_Procedure
+    
+    Procedure SelectColumnsAtCursor tExcelCursor strCursor Integer iAdditionalColumns
+        Send SelectColumns strCursor.iCol iAdditionalColumns
+    End_Procedure
+    
+    Procedure SelectRowsAtCursor tExcelCursor strCursor Integer iAdditionalRows
+        Send SelectRows strCursor.iRow iAdditionalRows
+    End_Procedure
+    
+    Procedure SelectRangeAtCursors tExcelCursor strCursor1 tExcelCursor strCursor2
+        Send SelectRange strCursor1.iRow strCursor1.iCol (strCursor2.iRow-strCursor1.iRow) (strCursor2.iCol-strCursor1.iCol)
+    End_Procedure
+
+    Procedure SelectCellAtCursor tExcelCursor strCursor1 
+        Send SelectRangeAtCursors strCursor1 strCursor1
+    End_Procedure
+    
+    Procedure AppendStatement String[] ByRef aStatements String sStatement
+        Move sStatement to aStatements[SizeOfArray(aStatements)]
+    End_Procedure
+    
+    Procedure SelectedRangeSetBackgroundColor Integer iColor
+        String[] aStatements
+        //    Rows("1:1").Select
+        //    With Selection.Interior
+        //        .Pattern = xlSolid
+        //        .PatternColorIndex = xlAutomatic
+        //        .Color = 255
+        //        .TintAndShade = 0
+        //        .PatternTintAndShade = 0
+        //    End With
+        
+        Send AppendStatement (&aStatements) ('With objExcel.Selection.Interior')
+        Send AppendStatement (&aStatements) ('.Color = '+ToVBA(oRgbFunctions,iColor))
+        Send AppendStatement (&aStatements) 'End With'
+        Send ComExecuteStatement (JoinString(oStringFunctions,aStatements,Character(10),0,0))
+    End_Procedure
+    
+        Function _BooleanAsString Boolean bState Returns String
+            Function_Return (If(bState,"True","False"))
+        End_Function
+    
+    Procedure SelectedRangeSetFontBold Boolean bBold
+        Send ComExecuteStatement ('objExcel.Selection.Font.Bold='+_BooleanAsString(Self,bBold))
+    End_Procedure
+            
+    Procedure SelectedRangeSetFontItalic Boolean bItalic
+        Send ComExecuteStatement ('objExcel.Selection.Font.Italic='+_BooleanAsString(Self,bItalic))
+    End_Procedure
+
+    Procedure SelectedRangeSetFontColor Integer iColor
+        Send ComExecuteStatement ('objExcel.Selection.Font.Color='+ToVBA(oRgbFunctions,iColor))
+    End_Procedure
+
+    // iBorderType = 
+    Define ExcelBorder_InsideHorizontal for 12
+    Define ExcelBorder_InsideVertical   for 11
+    Define ExcelBorder_DiagonalDown     for 5
+    Define ExcelBorder_DiagonalUp       for 6
+    Define ExcelBorder_EdgeBottom       for 9
+    Define ExcelBorder_EdgeLeft         for 7
+    Define ExcelBorder_EdgeRight        for 10
+    Define ExcelBorder_EdgeTop          for 8
+    
+    Define ExcelBorderWeight_None       for -4142   
+    Define ExcelBorderWeight_Hairline   for 1
+    Define ExcelBorderWeight_Medium     for -4138
+    Define ExcelBorderWeight_Thick      for 4    
+    Define ExcelBorderWeight_Thin       for 2    
+
+    Define ExcelLineStyle_None          for -4142
+    Define ExcelLineStyle_Continuous    for 1       
+    Define ExcelLineStyle_Dash          for -4115   
+    Define ExcelLineStyle_DashDot       for 4       
+    Define ExcelLineStyle_DashDotDot    for 5       
+    Define ExcelLineStyle_Dot           for -4118   
+    Define ExcelLineStyle_Double        for -4119   
+    Define ExcelLineStyle_SlantDashDot  for 13      
+
+    Procedure SelectedRangeSetBorder Integer iBorderType Integer iLineStyle Integer iBorderWeight Integer iColor
+        String[] aStatements
+        
+        Send AppendStatement (&aStatements) ('With objExcel.Selection.Borders('+String(iBorderType)+')')
+        Send AppendStatement (&aStatements) ('.LineStyle = '+String(iLineStyle))
+        If (iLineStyle=ExcelLineStyle_Continuous) Begin
+            Send AppendStatement (&aStatements) ('.Weight = '+String(iBorderWeight))
+        End
+        Send AppendStatement (&aStatements) ('.Color = '+ToVBA(oRgbFunctions,iColor))
+        Send AppendStatement (&aStatements) 'End With'
+
+        Send ComExecuteStatement (JoinString(oStringFunctions,aStatements,Character(10),0,0))
+    End_Procedure
+    
+    Define ExcelFontUnderlineStyle_Double           for -4119
+    Define ExcelFontUnderlineStyle_Single           for 2     
+    Define ExcelFontUnderlineStyle_DoubleAccounting for 5     
+    Define ExcelFontUnderlineStyle_None             for -4142 
+    Define ExcelFontUnderlineStyle_SingleAccounting for 4     
+    
+    Procedure SelectedRangeSetFontUnderline Integer iUnderlineStyle
+        Send ComExecuteStatement ('objExcel.Selection.Font.Underline='+String(iUnderlineStyle))
+    End_Procedure
+    
+    Define ExcelHorizontalAlignment_Left   for -4131  
+    Define ExcelHorizontalAlignment_Right  for -4152 
+    Define ExcelHorizontalAlignment_Center for -4108
+
+    Procedure SelectedRangeSetHorizontalAlignment Integer iHorizontalAlignment
+        Send ComExecuteStatement ('objExcel.Selection.HorizontalAlignment='+String(iHorizontalAlignment))
+    End_Procedure
+
+    Define ExcelVerticalAlignment_Top   for -4160
+    Define ExcelVerticalAlignment_Bottom  for -4107
+    Define ExcelVerticalAlignment_Center for -4108
+
+    Procedure SelectedRangeSetVerticalAlignment Integer iVerticalAlignment
+        Send ComExecuteStatement ('objExcel.Selection.VerticalAlignment='+String(iVerticalAlignment))
+    End_Procedure
+            
+    Procedure SelectedRangeSetWrapText Boolean bWrapText
+        Send ComExecuteStatement ('objExcel.Selection.WrapText='+_BooleanAsString(Self,bWrapText))
+    End_Procedure
+    
+    Procedure SelectedRangeColumnsAutofit
+        Send ComExecuteStatement ('objExcel.Selection.EntireColumn.AutoFit')
+    End_Procedure
+    
+        Function _RelativeCellAddress tExcelCursor strTargetCursor tExcelCursor strSourceCursor Returns String
+            Integer iDelta
+            String sValue
+            Move "R" to sValue
+            Move (strSourceCursor.iRow-strTargetCursor.iRow) to iDelta
+            If (iDelta<>0) Begin
+                Move (sValue+"["+String(iDelta)+"]") to sValue
+            End
+            Move (sValue+"C") to sValue
+            Move (strSourceCursor.iCol-strTargetCursor.iCol) to iDelta
+            If (iDelta<>0) Begin
+                Move (sValue+"["+String(iDelta)+"]") to sValue
+            End
+            Function_Return sValue
+        End_Function
+        
+        Function _SumFormulaText tExcelCursor strTargetCursor ;
+                                 tExcelCursor strSourceCursor1 ;
+                                 tExcelCursor strSourceCursor2 ;
+                                 Returns String
+            Integer iDelta
+            String sValue sRelativeCell
+            Move "=SUM(#:#)" to sValue
+            Move (Replace("#",sValue,_RelativeCellAddress(Self,strTargetCursor,strSourceCursor1))) to sValue
+            Move (Replace("#",sValue,_RelativeCellAddress(Self,strTargetCursor,strSourceCursor2))) to sValue
+            Function_Return sValue
+        End_Function
+    
+    Procedure InsertSumFormula tExcelCursor strTargetCursor ;
+                              tExcelCursor strSourceCursor1 ;
+                              tExcelCursor strSourceCursor2 
+        String sStatement
+        Send SelectCellAtCursor strTargetCursor
+        Move 'objExcel.ActiveCell.FormulaR1C1 = "' to sStatement
+        Move (sStatement+_SumFormulaText(Self,strTargetCursor,strSourceCursor1,strSourceCursor2)+'"') to sStatement
+        Send ComExecuteStatement sStatement
+    End_Procedure
+End_Class

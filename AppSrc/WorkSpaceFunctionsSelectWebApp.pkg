@@ -1,0 +1,244 @@
+
+Use VdfRuntime.pkg
+Use Win\GridFunctions.pkg
+
+Object oWorkspaceSelectorPanel is a ModalPanel
+    Set Size to 183 430
+    Set Location to 7 0
+    Set Label to 'Open webapp database'
+    Set Locate_Mode to CENTER_ON_PANEL
+    Set Border_Style to Border_Thick
+    
+    On_Key kCancel Send Close_Panel
+    
+    Procedure AcceptPanel
+        Set _pbAccept to True
+        Send Close_Panel
+    End_Procedure
+    
+    Object oWebAppsGrid is a GridSture
+        Set Location to 6 7
+        Set Size to 154 417
+        Set Line_Width to 4 0
+        Set Form_Width 0 to 113
+        Set Header_Label  0 to "Application name"
+        Set Form_Width    1 to 47
+        Set Header_Label  1 to "VDF Ver"
+        Set Form_Width 2 to 198
+        Set Header_Label  2 to "Data folder"
+        Set Form_Width 3 to 50
+        Set Header_Label 3 to "Status"
+        Set GridLine_Mode to Grid_Visible_Vert
+        Set peAnchors to anAll
+        Set peResizeColumn to rcSelectedColumn
+        Set piResizeColumn to 2
+        Send SetHighlightRowState of oGridFunctions Self
+        
+        On_Key kEnter send AcceptPanel
+        
+        Function CurrentAuxValue Returns Integer
+            Integer iItem
+            If (Item_Count(Self)<>0) Begin
+                Get Current_Item to iItem
+                Get ItemBaseItem of oGridFunctions Self iItem to iItem
+                Function_Return (Aux_Value(Self,iItem))
+            End
+            Function_Return -1
+        End_Function
+        
+        Function CurrentFilelistCfg Returns Integer
+            Integer iItem
+            If (Item_Count(Self)<>0) Begin
+                Get Current_Item to iItem
+                Get ItemBaseItem of oGridFunctions Self iItem to iItem
+                Function_Return (Value(Self,iItem+2))
+            End
+            Function_Return ""
+        End_Function
+        
+        Procedure EntryDisplayRow Integer iRow
+            Boolean bRunState
+            Integer iBase iWebappIndex
+            Get RowBaseItem of oGridFunctions Self iRow to iBase
+            Get Aux_Value iBase to iWebappIndex
+            Set Value (iBase+0) to gaWebApplications[iWebAppIndex].sName       
+            Set Value (iBase+1) to gaWebApplications[iWebAppIndex].sVdfVersion 
+            Set Value (iBase+2) to gaWebApplications[iWebAppIndex].sDataPath   
+            Get WebAppRunState of oVdfRuntimeFunctions iWebAppIndex to bRunState
+            Set Value (iBase+3) to (If(bRunState,"Running","Stopped"))         
+        End_Procedure
+        
+        Procedure EntryDisplayWebApplication Integer iWebAppIndex
+            Integer iRow
+            Get FindAuxValueRow of oGridFunctions Self iWebAppIndex 0 0 to iRow
+            If (iRow<>-1) Begin
+                Send EntryDisplayRow iRow
+            End 
+            Else Begin
+                Error 231 "Webapplication not found in list"
+            End
+        End_Procedure
+        
+//        Procedure OnMouseDoubleClick Integer iItem
+//            Integer iWebAppIndex iBase iActionCode
+//            Get ItemBaseItem of oGridFunctions Self iItem to iBase
+//            Get Aux_Value iBase to iWebAppIndex
+//            Get PopupWebappIndex of oWebApplicationsActionsPanel iWebAppIndex False to iActionCode
+//            If (iActionCode<>0) Begin
+//                If (iActionCode=1) Begin // Stop
+//                    Send WebAppStop iWebAppIndex
+//                End
+//                If (iActionCode=2) Begin // Start
+//                    Send WebAppStart iWebAppIndex
+//                End
+//                If (iActionCode=3) Begin // Open WS
+//                    Send WebAppSetWS iWebAppIndex
+//                End
+//                Send EntryDisplayRow (ItemRow(oGridFunctions,Self,iBase))
+//            End
+//        End_Procedure
+        
+        Procedure FillGrid 
+            Integer iWebAppIndex iMax iBase
+            Boolean bRunState
+            Integer iRuntimeIndex
+        
+            Get SelectedVersionIndex of oVersionSelector to iRuntimeIndex
+        
+            Set Dynamic_Update_State to False
+            Send Delete_Data
+            Move (SizeOfArray(gaWebApplications)-1) to iMax
+            For iWebAppIndex from 0 to iMax
+                If (iRuntimeIndex=-1 or iRuntimeIndex=gaWebApplications[iWebAppIndex].iRuntimeIndex) Begin
+                    Get Item_Count to iBase
+                    Send Add_Item MSG_NONE gaWebApplications[iWebAppIndex].sName
+                    Send Add_Item MSG_NONE gaWebApplications[iWebAppIndex].sVdfVersion
+                    Send Add_Item MSG_NONE gaWebApplications[iWebAppIndex].sDataPath
+                    Get WebAppRunState of oVdfRuntimeFunctions iWebAppIndex to bRunState
+                    Send Add_Item MSG_NONE (If(bRunState,"Running","Stopped"))
+                    Set Aux_Value iBase to iWebAppIndex
+                End
+            Loop
+            Send SetEntryState of oGridFunctions Self False
+            Set Dynamic_Update_State to True
+        End_Procedure
+
+        Function CurrentDataFolder Returns String
+            Integer iBase
+            String sFolder
+            If (Item_Count(Self)) Begin
+                Get BaseItem of oGridFunctions Self to iBase
+                Get Value (iBase+2) to sFolder
+            End 
+            Function_Return sFolder
+        End_Function
+        
+        Function CurrentVdfVersion Returns String
+            Integer iBase
+            String sValue
+            If (Item_Count(Self)) Begin
+                Get BaseItem of oGridFunctions Self to iBase
+                Get Value (iBase+1) to sValue
+            End 
+            Function_Return sValue
+        End_Function
+        
+    End_Object
+
+    Object oVersionSelector is a ComboForm
+        Set Size to 13 39
+        Set Location to 164 60
+        Set Label to "Constrain ver:"
+        Set Label_Justification_Mode to JMode_Right
+        Set Label_Col_Offset to 0
+        Set peAnchors to anBottomLeft
+        Set Entry_State to False
+        Set Combo_Sort_State to True
+        
+        Function SelectedVersionIndex Returns Integer
+            Integer iIndex
+            String sVdfVer
+            Get Value to sVdfVer
+            If (sVdfVer="All") Begin
+                Function_Return -1
+            End
+            Get RuntimeIndex of oVdfRuntimeFunctions sVdfVer to iIndex
+            Function_Return iIndex
+        End_Function    
+        
+        Procedure DoFillComboX
+            Integer iIndex iMax
+            Boolean bOk
+            String sVdfVer
+            String[] aValues
+
+            Send ReadRegistryRecentWorkspacesAllVersions of oWorkSpaceFunctions (&aValues)
+
+            Send Combo_Delete_Data
+            Send Combo_Add_Item "All"
+            Move (SizeOfArray(aValues)-1) to iMax
+            For iIndex from 0 to iMax
+                Get SwsFileVersion of oWorkSpaceFunctions aValues[iIndex] (&sVdfVer) to bOk
+                If (bOk) Begin
+                    Send AddVersion sVdfVer
+                End
+            Loop
+            Set Value to "All"
+        End_Procedure
+        
+        Procedure AddVersion String sVer
+            Integer iMax iItem
+            Get Combo_Item_Count to iMax
+            Decrement iMax
+            For iItem from 0 to iMax
+                If (sVer=Combo_Value(Self,iItem)) Begin
+                    Procedure_Return
+                End
+            Loop
+            Send Combo_Add_Item sVer
+        End_Procedure
+    
+        Procedure OnChange
+            Send FillGrid of oWebAppsGrid
+        End_Procedure
+    End_Object
+
+    Object oButton1 is a Button
+        Set Location to 164 315
+        Set Label to 'Open'
+        Set peAnchors to anBottomRight
+    
+        Procedure OnClick
+            Set _pbAccept to True
+            Send Close_Panel            
+        End_Procedure
+    
+    End_Object
+
+    Object oButton2 is a Button
+        Set Location to 164 370
+        Set Label to 'Cancel'
+        Set peAnchors to anBottomRight
+    
+        Procedure OnClick
+            Send Close_Panel    
+        End_Procedure
+    
+    End_Object
+    
+    Property Boolean _pbAccept
+    
+    Function SelectFilelist Returns String
+        String sFilelist
+        Set _pbAccept to False
+        Send FillGrid of oWebAppsGrid
+        Send DoFillComboX of oVersionSelector
+        Send Popup
+        If (_pbAccept(Self)) Begin
+            Get CurrentFilelistCfg of oWebAppsGrid to sFilelist
+            Get AppendPath of oFileFunctions sFilelist "filelist.cfg" to sFilelist
+        End
+        Function_Return sFilelist
+    End_Function
+End_Object
+

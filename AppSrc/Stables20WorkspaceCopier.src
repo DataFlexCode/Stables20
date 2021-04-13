@@ -1,0 +1,75 @@
+﻿Use Windows.pkg
+Use cApplication.pkg
+Use cConnection.pkg
+
+Object oApplication is a cApplication
+    Set peHelpType to htHtmlHelp
+
+    Object oConnection is a cConnection
+        Use LoginEncryption.pkg
+        Use DatabaseLoginDialog.dg
+    End_Object
+End_Object
+
+Use WorkspaceCopier\cWorkspaceCopier.pkg
+
+Object oWorkspaceCopierXRay is a cWorkspaceCopier
+    Set psWorkspaceId to "Stables20"
+
+    // The folder structure:
+    Object oFolderWorkspace is a cWSCopyFolder
+
+        Send SetFolder "" False // "" is reserved for the root folder of the workspace
+        Send AddFileTypes "*.sws;readme.txt"
+
+        Object oFolderAppHtml is a cWSCopyFolder
+            Send SetFolder "AppHtml" False
+            Send AddFileTypes C_WSCF_APPHTML_MASKS
+            Send AddFileTypes C_WSCF_APPHTML_IMG_MASKS
+            Send AddFileTypes "*.wso;favicon.ico;web.config;Global.asa;"
+            Object oFolderCCSStyle is a cWSCopyFolder
+                Send SetFolder "CssStyle" True
+                Set pbInheritFileTypes to True
+            End_Object
+            Object oFolderImages is a cWSCopyFolder
+                Send SetFolder "Images" True
+                Set pbInheritFileTypes to True
+            End_Object
+        End_Object
+
+        Object oFolderAppSrc is a cWSCopyFolder
+            Send SetFolder "AppSrc" True // include all subfolders by default
+            Send AddFileTypes C_WSCF_DFSOURCE_MASKS
+
+            Object oFolderConfig is a cWSCopyFolder
+                Send SetFolder "config" False
+                Send AddFileTypes "classlist.xml;*.bmp;*.dfo"
+            End_Object
+        End_Object
+
+        Object oFolderDDSrc is a cWSCopyFolder
+            Send SetFolder "DDSrc" True // include all subfolders by default
+            Send AddFileTypes C_WSCF_DFSOURCE_MASKS
+            Send AddFileTypes "ddclasslist.xml"
+            Send AddFileTypes "*.fd"
+        End_Object
+
+        Object oFolderData is a cWSCopyFolder
+            Send SetFolder "Data" False
+            Send AddFileTypes C_WSCF_DATA_MASKS
+        End_Object
+
+        Object oFolderPrograms is a cWSCopyFolder
+            Send SetFolder "Programs" False
+            Send AddFileTypes "*.ws"
+        End_Object
+    End_Object
+    
+End_Object            
+
+Global_Variable Integer ghoWorkspaceCopier
+Move oWorkspaceCopierXRay to ghoWorkspaceCopier
+
+Use WorkspaceCopier\oWorkspaceCopierPanel.dg // ghoWorkspaceCopier MUST be defined before including this
+
+Start_UI oWorkspaceCopierPanel

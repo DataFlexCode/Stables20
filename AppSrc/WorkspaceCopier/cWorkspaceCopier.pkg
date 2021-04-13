@@ -1,0 +1,522 @@
+﻿//>
+//> Use the classes in here to define which files are to be
+//> copied when a whole workspace is being copied to a
+//> colleague developer or to a download area on a server.
+//>
+//> <code>
+//> Use WorkspaceCopier\cWorkspaceCopier.pkg
+//>
+//> Object oWorkspaceCopier is a cWorkspaceCopier
+//>
+//>     Object oFolderWorkspace is a cWSCopyFolder
+//>         
+//>         Send SetFolder "" False // "" Is reserved for the root
+//>         Send AddFileTypes "*.sws;readme.txt"
+//>         
+//>         Object oFolderAppHtml is a cWSCopyFolder
+//>             Send SetFolder "AppHtml" False
+//>             Send AddFileTypes "*.wso;*.html;favicon.ico;web.config;Global.asa;"
+//>         End_Object
+//>         
+//>         Object oFolderAppSrc is a cWSCopyFolder
+//>             Send SetFolder "AppSrc" True // include all subfolders
+//>             Send AddFileTypes C_WSCF_DFSOURCE_MASKS
+//>         
+//>             Object oFolderConfig is a cWSCopyFolder
+//>                 Send SetFolder "config" False
+//>                 Send AddFileTypes "classlist.xml;*.bmp;*.dfo"
+//>             End_Object
+//>         End_Object
+//>         
+//>         Object oFolderDDSrc is a cWSCopyFolder
+//>             Send SetFolder "DDSrc" True // include all subfolders
+//>             Send AddFileTypes C_WSCF_DFSOURCE_MASKS
+//>             Send AddFileTypes "ddclasslist.xml"
+//>         End_Object
+//>         
+//>         Object oFolderData is a cWSCopyFolder
+//>             Send SetFolder "Data" False 
+//>             Send AddFileTypes "filelist.cfg;*.dat;*.tag;*.k*;*.hdr;*.vld;*.int;"
+//>         End_Object
+//>
+//>         Object oFolderPrograms is a cWSCopyFolder
+//>             Send SetFolder "Programs" False
+//>             Send AddFileTypes "*.ws"
+//>         End_Object
+//>     End_Object
+//>     
+//> End_Object
+//> </code>
+//> 
+//> After having defined such a structure you can copy the current workspace
+//> at the click of a button
+//> <code>
+//> Procedure OnClick
+//>     String sSourceFolder sTargetFolder
+//>     tWsCopier stCopier
+//>     Get VdfFolderPath of oFileFunctions VDF_APPSRC to sSourceFolder
+//>     Get PathToFolder of oFileFunctions sSourceFolder to sSourceFolder
+//>     Get GenerateCopier of oWorkspaceCopier to stCopier
+//>     Get CopyWorkspace of oWorkspaceCopierExecutor sSourceFolder "" stCopier to sTargetFolder
+//>     Send ExploreFolder of oFileFunctions sTargetFolder
+//> End_Procedure
+//> </code>
+//>
+//> pkg.doc.end
+
+Use GlobalFunctionsProcedures.pkg
+Use cJsonObject.pkg
+
+Use StringFunctions.pkg
+Use FileFunctions.pkg
+Use TableAccessFunctions.pkg
+
+Struct tWsCopyFolder
+    String sFolderName             // For this folder
+    Boolean bInheritFileTypes      // inherit allowed file types
+    String[] aFileTypes            // file types to be added
+    // IF bInheritFileTypes is false and aFileTypes is empty THEN all files will be allowed
+
+    Boolean bAddAllSubFolders           // Include all subfolders?
+    tWsCopyFolder[] aSubfolders   // Include specific subfolders. If bAddAllSubFolders is true 
+End_Struct
+
+Struct tWsCopier
+    tWsCopyFolder stFolder
+    //> These tables should always be zerofiled.
+    String[] aZeroFilableTables
+    String[] aFolderNamesNotToCopy // masks accepted
+End_Struct
+
+
+Class cWSCopyFolder is a cObject
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        
+        
+        Property String   psFolderName
+        Property Boolean  pbAddAllSubFolders True // All children will inherit file types
+
+        Property Boolean  pbInheritFileTypes False
+        Property String[] paFileTypes 
+
+        Property Integer[] _paSubfolderHandlers // list of cWSCopyFolder objects embedded in this
+        
+        Delegate Send _RegisterSubFolder Self
+    End_Procedure
+        
+    Procedure _RegisterSubFolder Integer hSubfolderHandler
+        Set _paSubfolderHandlers to (InsertInArray(_paSubfolderHandlers(Self),-1,hSubfolderHandler))
+    End_Procedure
+    
+    Function NewCopyFolder Returns tWsCopyFolder
+        tWsCopyFolder stCopyFolder
+        Function_Return stCopyFolder
+    End_Function
+    
+    Procedure SetFolder String sFolderName Boolean bAddAllSubFolders
+        Set psFolderName to sFolderName
+        Set pbAddAllSubFolders to bAddAllSubFolders
+    End_Procedure
+    
+    Procedure _AddFileType String sFileType
+        String[] aFileTypes
+        Move (Trim(Lowercase(sFileType))) to sFileType
+        If (sFileType<>"") Begin
+            Get paFileTypes to aFileTypes
+            If (SearchArray(sFileType,aFileTypes)=-1) Begin
+                Move sFileType to aFileTypes[SizeOfArray(aFileTypes)]
+                Set paFileTypes to aFileTypes
+            End
+        End
+    End_Procedure
+
+    Procedure AddFileTypes String sFileTypes // ";" separated values
+        Integer iItem iMax
+        String[] aTypes
+        Move (StrSplitToArray(sFileTypes,";")) to aTypes
+        Move (SizeOfArray(aTypes)-1) to iMax
+        For iItem from 0 to iMax
+            Send _AddFileType aTypes[iItem]
+        Loop
+    End_Procedure
+    
+    Procedure _UpdateCopier tWsCopyFolder ByRef stFolder
+        Integer iMax iItem
+        Integer[] ahFolders
+        tWsCopyFolder stTemp
+        
+        Get psFolderName       to stFolder.sFolderName      
+        Get pbInheritFileTypes to stFolder.bInheritFileTypes
+        Get paFileTypes        to stFolder.aFileTypes       
+        Get pbAddAllSubFolders to stFolder.bAddAllSubFolders
+        Get _paSubfolderHandlers to ahFolders
+        Move (SizeOfArray(ahFolders)-1) to iMax
+        For iItem from 0 to iMax
+            Get NewCopyFolder to stTemp
+            Send _UpdateCopier of ahFolders[iItem] (&stTemp)
+            Move stTemp to stFolder.aSubfolders[SizeOfArray(stFolder.aSubfolders)]
+        Loop
+    End_Procedure
+End_Class
+
+Class cWorkspaceCopier is a cObject
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String psWorkspaceId
+        Property Integer[] _paSubfolderHandlers
+        
+        Property String[] paZeroFilableTables // masks allowed
+        Property String[] paFolderNamesNotToCopy // masks allowed
+    End_Procedure
+
+    Procedure AddZeroFilableTable String sTableName
+        Set paZeroFilableTables to (InsertInArray(paZeroFilableTables(Self),-1,Lowercase(sTableName)))
+    End_Procedure
+    
+    Procedure AddFolderNameDontCopy String sFolderName
+        Set paFolderNamesNotToCopy to (InsertInArray(paFolderNamesNotToCopy(Self),-1,Lowercase(sFolderName)))
+    End_Procedure
+
+    
+    Procedure _RegisterSubFolder Integer hSubfolderHandler
+        Set _paSubfolderHandlers to (InsertInArray(_paSubfolderHandlers(Self),-1,hSubfolderHandler))
+    End_Procedure
+
+    Function NewCopier Returns tWsCopier
+        tWsCopier stCopier
+        Function_Return stCopier
+    End_Function
+        
+    Function GenerateCopier Returns tWsCopier
+        Integer[] ahFolder
+        tWsCopier stCopier
+
+        Get NewCopier to stCopier
+        
+        Get _paSubfolderHandlers to ahFolder
+        If (SizeOfArray(ahFolder)=1) Begin
+            Send _UpdateCopier of ahFolder[0] (&stCopier.stFolder)
+            Get paZeroFilableTables to stCopier.aZeroFilableTables
+            Get paFolderNamesNotToCopy to stCopier.aFolderNamesNotToCopy
+        End
+        Else Begin
+            If (SizeOfArray(ahFolder)>1) Begin
+                Error DFERR_PROGRAM "Only one folder allowed as root folder of workspace-copier"
+            End
+        End
+        
+        Function_Return stCopier
+    End_Function
+    
+    Function ToJsonUtf8 Returns UChar[] 
+        Integer hoJson
+        tWsCopier stCopier
+        UChar[] ucCopier
+
+        Get GenerateCopier to stCopier
+        
+        Get Create (RefClass(cJsonObject)) to hoJson
+            Send DataTypeToJson of hoJson stCopier
+            Set peWhiteSpace of hoJson to jpWhitespace_Pretty
+            Get StringifyUtf8 of hoJson to ucCopier
+        Send Destroy of hoJson
+        
+        Function_Return ucCopier
+    End_Function
+
+    Function ConfigFilePath Returns String
+        String sFolder sFileName
+        Get VdfFolderPath of oFileFunctions VDF_APPSRC to sFolder
+        Get PathToFolder of oFileFunctions sFolder to sFolder
+        Get AppendPath of oFileFunctions sFolder "workspace-copier-config.json" to sFileName
+        Function_Return sFileName
+    End_Function
+    
+    Procedure SaveWorkspaceCopierConfigJSON
+        Integer iChannel
+        String sFileName
+        UChar[] ucCopier
+
+        Get ToJsonUtf8 to ucCopier
+
+        Get ConfigFilePath to sFileName
+        Get DirectOutput of oFileFunctions sFileName to iChannel
+
+        If (iChannel>=0) Begin
+            Write channel iChannel ucCopier
+            Send CloseOutput of oFileFunctions iChannel
+        End
+    End_Procedure
+
+    Procedure End_Construct_Object
+        Forward Send End_Construct_Object
+        Send AddZeroFilableTable "awflextablerecord.dat"
+        Send AddZeroFilableTable "awloginrequest.dat"
+        Send AddZeroFilableTable "awmailaccount.dat"
+        Send AddZeroFilableTable "awmessage.dat"
+        Send AddZeroFilableTable "awmessagelog.dat"
+        Send AddZeroFilableTable "awmessagetemplate.dat"
+        Send AddZeroFilableTable "awrecordcollection.dat"
+        Send AddZeroFilableTable "awwebappsessionvalueset.dat"
+        Send AddZeroFilableTable "awwebapp.dat"
+        Send AddZeroFilableTable "awwebapptoken.dat"
+        Send AddZeroFilableTable "awwebappuservalueset.dat"
+        Send AddZeroFilableTable "awexternalnotiflog.dat"
+        Send AddZeroFilableTable "awexternalnotiftemplate.dat"
+        Send AddZeroFilableTable "q3help.dat"
+        Send AddZeroFilableTable "webappuser.dat"
+        Send AddZeroFilableTable "webappsession.dat"
+        Send AddZeroFilableTable "webappserverprops.dat"
+        Send AddZeroFilableTable "webappauthtoken.dat"
+        Send AddZeroFilableTable "webappsecmodlog.dat"
+        Send AddZeroFilableTable "webappserversettings.dat"
+        Send AddZeroFilableTable "webappuserinvitation.dat"
+        Send AddZeroFilableTable "webappuserpasswordhistory.dat"
+        Send AddZeroFilableTable "webappuserreset.datwebapp.dat"
+        
+        Send AddFolderNameDontCopy "*backup*"
+    End_Procedure
+End_Class
+
+    
+Define C_WSCF_DFSOURCE_MASKS      for "*.src;*.vw;*.rv;*.dg;*.sl;*.wo;*.dd;*.bp;*.pkg;*.inc"
+Define C_WSCF_VDFQSOURCE_MASKS    for "*.utl;*.nui;*.h;*.cfg;*.dbu"
+Define C_WSCF_DATA_MASKS          for "filelist.cfg;*.dat;*.tag;*.hdr;*.vld;*.int;" // *.k* has been removed explicitly
+Define C_WSCF_APPHTML_MASKS       for "*.html;*.js;*.css;*.json;*.map;"
+Define C_WSCF_APPHTML_IMG_MASKS   for "*.png;*.jpg;*.gif;*.svg;" 
+Define C_WSCF_APPHTML_ROOT_MASKS  for "*.wso;favicon.ico;Global.asa;" // (web.config should not be part)
+Define C_WSCF_APPSRC_CONFIG_MASKS for "classlist.xml;*.bmp;*.dfo"
+
+Use StackFunctions.pkg
+
+Struct _tWsCopyFolderExec
+    String sTargetRoot
+    String sTargetSubfolderPath
+    tWildCardEvalSequence[] aTablesToZeroFile
+    tWildCardEvalSequence[] aFoldersNotToCopy
+End_Struct
+    
+Class cWorkspaceCopierExecutor is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String[] paNotCopied // Files not copied during CopyWorkspace
+        Property String[] paZeroFileTables // tables that need to be zerofiled
+    End_Procedure
+    
+        Function  _EffectiveFileTypes tWsCopyFolder stFolder String[] aParentFileTypes Returns String[]
+            Integer iItem iMax
+            String[] aFileTypes
+            If (stFolder.bInheritFileTypes) Begin
+                Move aParentFileTypes to aFileTypes
+            End
+            
+            Move (SizeOfArray(stFolder.aFileTypes)-1) to iMax
+            For iItem from 0 to iMax
+                Send StringAddToSet of oStackFunctions (&aFileTypes) stFolder.aFileTypes[iItem]
+            Loop
+            
+            Function_Return aFileTypes
+        End_Function
+        
+        Function _FindSubfolder tWsCopyFolder stFolder String sFolderName Returns Integer
+            Integer iItem iMax
+            
+            Move (Lowercase(sFolderName)) to sFolderName
+            Move (SizeOfArray(stFolder.aSubfolders)-1) to iMax
+            For iItem from 0 to iMax
+                If (sFolderName=Lowercase(stFolder.aSubfolders[iItem].sFolderName)) Begin
+                    Function_Return iItem
+                End
+            Loop
+            Function_Return -1
+        End_Function
+
+        Procedure ItemCopy String sSourcePath String sTargetRoot String sTargetSubfolderPath String sTargetFileName tFileData stItem
+            Boolean bSuccess
+            String sTargetPath
+            Get CreateFolderMultiLevel of oFileFunctions sTargetRoot sTargetSubfolderPath to bSuccess
+            If (bSuccess) Begin
+                Move sTargetRoot to sTargetPath
+                Get AppendPath of oFileFunctions sTargetPath sTargetSubfolderPath to sTargetPath
+                Get AppendPath of oFileFunctions sTargetPath sTargetFileName to sTargetPath
+                
+                Get CopyFileNew of oFileFunctions sSourcePath sTargetPath to bSuccess
+                If (not(bSuccess)) Begin
+                    Error DFERR_PROGRAM ("Workspace Copier: file not copied: "+sSourcePath)
+                End
+            End
+            Else Begin
+                Error DFERR_PROGRAM ("Workspace Copier: invalid target subfolder: "+sTargetSubfolderPath)
+            End
+        End_Procedure
+
+        Procedure OnFileCopy String sSourcePath String sTargetRoot String sTargetSubfolderPath String sTargetFileName tFileData stItem
+            Send ItemCopy sSourcePath sTargetRoot sTargetSubfolderPath sTargetFileName stItem
+        End_Procedure
+        
+        Procedure OnFileDontCopy String sSourcePath String sTargetRoot String sTargetSubfolderPath String sTargetFileName tFileData stItem
+            Set paNotCopied to (InsertInArray(paNotCopied(Self),-1,sSourcePath))
+        End_Procedure
+
+    Procedure OnFolderNotCopied String sFolderPath 
+        Set paNotCopied to (InsertInArray(paNotCopied(Self),-1,"Folder not copied: "+sFolderPath))
+    End_Procedure
+
+    Procedure OnZeroFileTable String sTablePath
+        Set paZeroFileTables to (InsertInArray(paZeroFileTables(Self),-1,sTablePath))
+    End_Procedure
+    
+    Procedure ZeroFileTables
+        Boolean bDeleted
+        Integer iMax iItem iTable
+        String sTablepath
+        String[] aTablePaths
+        Get paZeroFileTables to aTablePaths
+        Move (SizeOfArray(aTablePaths)-1) to iMax
+        For iItem from 0 to iMax
+            Move aTablePaths[iItem] to sTablepath
+            Get OpenTableAsAutoHandle of oTableAccessFunctions sTablepath DF_EXCLUSIVE 0 to iTable
+            If (iTable>0) Begin
+                ZeroFile iTable
+                Close iTable
+                // At this point we need to delete all the *.k? files that were generated by ZeroFile:
+                Get PathStripType of oFileFunctions sTablepath to sTablepath
+                Move (sTablepath+".k*") to sTablepath
+                Get DeleteFileNew of oFileFunctions sTablepath False to bDeleted
+            End
+            Else Begin
+                Error DFERR_PROGRAM ("Workspace Copier: Could not zerofile table: "+sTablepath)
+            End
+        Loop
+    End_Procedure
+    
+    Procedure _HandleFolder _tWsCopyFolderExec stExecControl tFileData[] aItems tWsCopyFolder stFolder String[] aParentFileTypes String sSourceFolder String sTargetFolder
+        Integer iItem iMax iSubfolderIndex
+        tFileData stItem
+        String[] aFileTypes 
+        tWsCopyFolder stSubfolder
+        tWildCardEvalSequence[] aEvalSequences
+        
+        If (stFolder.sFolderName<>"") Begin
+            Get AppendPath of oFileFunctions stExecControl.sTargetSubfolderPath stFolder.sFolderName to stExecControl.sTargetSubfolderPath
+        End
+        
+        Get _EffectiveFileTypes stFolder aParentFileTypes to aFileTypes
+        Send AddWildCardEvalSequences of oStringFunctions aFileTypes (&aEvalSequences)
+        
+        Move (SizeOfArray(aItems)-1) to iMax
+        For iItem from 0 to iMax
+            Move aItems[iItem] to stItem
+            If (stItem.bIsFolder) Begin
+                If (not(stItem.bSelfReference)) Begin
+                    
+                    If (not(WildCardMatchAny(oStringFunctions,Lowercase(stItem.sFileName),stExecControl.aFoldersNotToCopy))) Begin // If foldername is not "blacklistet"
+                        Get _FindSubfolder stFolder stItem.sFileName to iSubfolderIndex
+                        If (iSubfolderIndex=-1) Begin // If not found
+                            If (stFolder.bAddAllSubFolders) Begin // Do we add all?
+                                Move stFolder to stSubfolder
+                                Move (ResizeArray(stSubfolder.aSubfolders,0)) to stSubfolder.aSubfolders
+                                Move stItem.sFileName to stSubfolder.sFolderName
+                                Send _HandleFolder stExecControl stItem.aFolderContent stSubfolder aFileTypes (AppendPath(oFileFunctions,sSourceFolder,stItem.sFileName)) (AppendPath(oFileFunctions,sTargetFolder,stItem.sFileName))
+                            End
+                        End
+                        Else Begin
+                            Send _HandleFolder stExecControl stItem.aFolderContent stFolder.aSubfolders[iSubfolderIndex] aFileTypes (AppendPath(oFileFunctions,sSourceFolder,stItem.sFileName)) (AppendPath(oFileFunctions,sTargetFolder,stItem.sFileName))
+                        End
+                    End
+                    Else Begin
+                        Send OnFolderNotCopied (AppendPath(oFileFunctions,sSourceFolder,stItem.sFileName))
+                    End
+                End
+            End
+            Else Begin // is file
+                // does it match any of the access granting filename patterns?
+                // If so: copy it!
+                If (WildCardMatchAny(oStringFunctions,Lowercase(stItem.sFileName),aEvalSequences)) Begin
+                    // However, if it's an embedded table we must check if we need to zerofile the table
+                    
+                    If (Right(Lowercase(stItem.sFileName),4)=".dat") Begin // It's a table
+                        If (WildCardMatchAny(oStringFunctions,Lowercase(stItem.sFileName),stExecControl.aTablesToZeroFile)) Begin
+                            // Mark table for zerofile
+                            Send OnZeroFileTable (AppendPath(oFileFunctions,sTargetFolder,stItem.sFileName))
+                        End
+                    End
+                    
+                    Send OnFileCopy (AppendPath(oFileFunctions,sSourceFolder,stItem.sFileName)) stExecControl.sTargetRoot stExecControl.sTargetSubfolderPath stItem.sFileName stItem
+                End
+                Else Begin
+                    Send OnFileDontCopy (AppendPath(oFileFunctions,sSourceFolder,stItem.sFileName)) stExecControl.sTargetRoot stExecControl.sTargetSubfolderPath stItem.sFileName stItem
+                End
+            End
+        Loop
+    End_Procedure
+    
+    Function DefaultTargetFolder String sSourceFolderPath Returns String
+        String sTargetFolder sValue
+        Get UserTempFolder of oFileFunctions to sTargetFolder
+        Get PathToFileName of oFileFunctions sSourceFolderPath to sValue
+        Get AppendPath of oFileFunctions sTargetFolder sValue to sTargetFolder
+        Function_Return sTargetFolder
+    End_Function
+    
+    Function CopyWorkspace String sSourceFolder String sTargetFolder tWsCopier stCopier Returns String
+        Integer iItem iMax iChannel
+        String sValue sTargetRoot sOutFile
+        String[] aEmpty
+        String[] aFiles
+        tFileData[] aFileData
+        _tWsCopyFolderExec stExecControl
+        
+        Set paNotCopied to (ResizeArray(aFiles,0))
+        Set paZeroFileTables to (ResizeArray(paZeroFileTables(Self),0))
+
+        If (sTargetFolder<>"") Begin
+            Send ReadFolderRecursiveMaskOnFilesOnly of oFileFunctions sSourceFolder "*" (&aFileData) 99
+        
+        //        If (sTargetFolder="") Begin
+        //            Get UserTempFolder of oFileFunctions to sTargetFolder
+        //            Get PathToFileName of oFileFunctions sSourceFolder to sValue
+        //            Get AppendPath of oFileFunctions sTargetFolder sValue to sTargetFolder
+        //        End
+            
+            // At this point we must verify that the target folder 
+            Get PathToFolder of oFileFunctions sTargetFolder to sTargetRoot
+            If (FileExists(oFileFunctions,sTargetRoot)=2) Begin // It's a folder
+                Move sTargetRoot to stExecControl.sTargetRoot 
+                Get PathToFileName of oFileFunctions sTargetFolder to stExecControl.sTargetSubfolderPath
+                
+                Send AddWildCardEvalSequences of oStringFunctions stCopier.aZeroFilableTables (&stExecControl.aTablesToZeroFile)
+                Send AddWildCardEvalSequences of oStringFunctions stCopier.aFolderNamesNotToCopy (&stExecControl.aFoldersNotToCopy)
+                
+                Send _HandleFolder stExecControl aFileData stCopier.stFolder aEmpty sSourceFolder sTargetFolder
+                
+                Send ZeroFileTables
+                
+                Move (sTargetFolder+".not-copied.txt") to sOutFile
+                Get DirectOutput of oFileFunctions sOutFile to iChannel
+                If (iChannel>=0) Begin
+                    Get paNotCopied to aFiles
+                    Move (SizeOfArray(aFiles)-1) to iMax
+                    For iItem from 0 to iMax
+                        Writeln channel iChannel aFiles[iItem]
+                    Loop
+                    Send CloseOutput of oFileFunctions iChannel
+                    Send NotePad of oFileFunctions sOutFile
+                End
+
+            End
+            Else Begin
+                Error DFERR_PROGRAM ("Workspace Copier: invalid target folder: "+sTargetFolder)
+                Move "" to sTargetFolder
+            End
+        End
+        Else Begin
+            Error DFERR_PROGRAM ("Workspace Copier: target folder not specified")
+        End
+        
+        Function_Return sTargetFolder
+    End_Function
+End_Class

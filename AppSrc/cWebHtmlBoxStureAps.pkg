@@ -1,0 +1,61 @@
+﻿Use cWebHtmlBox.pkg
+Use StringFunctions.pkg
+
+Use XmlBuilder.pkg
+
+Integer iXXXCount
+Move 0 to iXXXCount
+
+Class cWebHtmlBoxStureAps is a cWebHtmlBox
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Send Define_cXmlBuilderProxyMixin
+        Object _oXMLBuilder is a cXmlBuilder
+            Set pbTagSelfClosingEnabled to False
+        End_Object
+        Set phXMLBuilder to _oXMLBuilder
+        Set psHtmlId to ("abc"+String(iXXXCount))
+        Increment iXXXCount
+    End_Procedure
+
+    Import_Class_Protocol cXmlBuilderProxyMixin // AddElement AndAllThat
+
+    Procedure OnBuildHtml
+    End_Procedure
+
+    Function InnerHtml Returns String
+        Integer iSize
+        Send XmlToString
+        Send OnBuildHtml
+        Send EndXml
+        Get XmlStringValueLength to iSize
+        If (iSize>MaxArgumentSize(oStringFunctions)) Begin
+            Error DFERR_PROGRAM ("Argument too big. Max allowed: "+String(MaxArgumentSize(oStringFunctions))+", arg is: "+String(iSize)+" (cWebHtmlBoxStureAps.pkg)")
+        End
+        Function_Return (XmlStringValue(Self))
+    End_Function
+
+    //> Note: This value can only retrieved once!
+    Function InnerHtmlArray Returns String[]
+        String[] aValues
+        Send XmlToString
+        Send OnBuildHtml
+        Send EndXml
+        Move _gaXmlBuildToString to aValues
+        Move (ResizeArray(_gaXmlBuildToString,0)) to _gaXmlBuildToString // You can only get its value once.
+        Function_Return aValues
+    End_Function
+    
+    Procedure WriteHtmlToChannel Integer iChannel
+        Send XmlToChannel_ANSI iChannel
+        Send OnBuildHtml
+        Send EndXml
+    End_Procedure
+
+    Procedure RefreshContent
+        Send UpdateHtmlArray (InnerHtmlArray(Self))
+    End_Procedure
+
+End_Class
+

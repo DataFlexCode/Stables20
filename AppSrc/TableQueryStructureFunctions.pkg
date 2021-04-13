@@ -1,0 +1,747 @@
+// This is an experimental package. It should not be included in production code.
+
+//> In a variable of type tTableQueryStructure you can store a tree structure of tTableQuery's
+//> that it is also able execute in concert.
+
+
+// TableQuery's wishlist for drivers:
+// 1. TQ's connections should not participate in VDF transactions.
+// 2. Possebility to control the cache size during fetch loop (if not there already)
+// 3. A driver function to compare two string variables according to server side collate sequence.
+//   http://bytes.com/topic/access/answers/211622-client-server-tip-inconsistent-collation-order-betw-access-server
+//   http://msdn.microsoft.com/en-us/library/ms184391.aspx
+
+Use TableQueryFunctions.pkg // Define oTableQueryFunctions object
+Use IndexFunctions.pkg
+Use FileFunctions.pkg // Define oFileFunctions object
+Use yUML.pkg
+
+Struct tTableQueryStructureCallBackMessage
+    Integer hMsg
+    Integer hObj
+End_Struct
+
+Struct tTableQueryStructure
+    // sQueryID is a (presumably short) string that identifies the query
+    // uniquely within the TQ structure. Most of the time this may be set
+    // to the main table's file number.
+    String sQueryID
+    tTableQuery stQ
+    tTableQueryStructure[] aSubQueries // (recursive)
+
+    // Definition of possible callback procedures for all possible
+    // events in the find loop at each query level (phew)
+    tTableQueryStructureCallBackMessage stOnBeforeMainLoop
+    tTableQueryStructureCallBackMessage stOnFoundBeforeSubQueries
+    tTableQueryStructureCallBackMessage stOnFoundBeforeSubQuery
+    tTableQueryStructureCallBackMessage stOnFoundAfterSubQuery
+    tTableQueryStructureCallBackMessage stOnFoundAfterSubQueries
+    tTableQueryStructureCallBackMessage stOnAfterMainLoop
+End_Struct
+
+Class cTableQueryStructureFunctions is a cObject
+
+    Function NewQueryStructure tTableQuery stRootQ String sRootQueryID Returns tTableQueryStructure
+        tTableQueryStructure stQueryStructure
+        If (sRootQueryID="") Begin
+            Move stRootQ.iTable to sRootQueryID
+        End
+        Move sRootQueryID to stQueryStructure.sQueryID
+        Move stRootQ to stQueryStructure.stQ
+        Function_Return stQueryStructure
+    End_Function
+    
+//    Function IsQueryTableIncluded Integer iTable tTableQueryStructure stQueryStructure Returns Boolean
+//        Integer iItem iItemMax
+//        If (iTable=stQueryStructure.stQ.iTable) Begin
+//            Function_Return True
+//        End
+//        Move (SizeOfArray(stQueryStructure.aSubQueries)-1) to iItemMax
+//        For iItem from 0 to iItemMax
+//            If (IsQueryTableIncluded(Self,iTable,stQueryStructure.aSubQueries[iItem])) Begin
+//                Function_Return True
+//            End
+//        Loop
+//        Function_Return False
+//    End_Function
+    
+    Procedure SendMessageOnQuery String sQueryID tTableQueryStructure ByRef stQueryStructure Integer hMsg Integer hObj Variant sValue1 Variant sValue2 Variant sValue3
+        Integer iItem iItemMax
+        If (sQueryID=stQueryStructure.sQueryID) Begin // iTable=0 sends the message on all queries
+            If (num_arguments=4) Begin
+                Send hMsg of hObj (&stQueryStructure) 
+            End
+            Else If (num_arguments=5) Begin
+                Send hMsg of hObj (&stQueryStructure) sValue1
+            End
+            Else If (num_arguments=6) Begin
+                Send hMsg of hObj (&stQueryStructure) sValue1 sValue2
+            End
+            Else If (num_arguments=7) Begin
+                Send hMsg of hObj (&stQueryStructure) sValue1 sValue2 sValue3
+            End
+        End
+        Else Begin
+            Move (SizeOfArray(stQueryStructure.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                If (num_arguments=4) Begin
+                    Send SendMessageOnQuery sQueryID (&stQueryStructure.aSubQueries[iItem]) hMsg hObj
+                End
+                Else If (num_arguments=5) Begin
+                    Send SendMessageOnQuery sQueryID (&stQueryStructure.aSubQueries[iItem]) hMsg hObj sValue1
+                End
+                Else If (num_arguments=6) Begin
+                    Send SendMessageOnQuery sQueryID (&stQueryStructure.aSubQueries[iItem]) hMsg hObj sValue1 sValue2
+                End                                                                                                                   
+                Else If (num_arguments=7) Begin
+                    Send SendMessageOnQuery sQueryID (&stQueryStructure.aSubQueries[iItem]) hMsg hObj sValue1 sValue2 sValue3
+                End
+            End
+        End
+    End_Procedure
+
+        Procedure _AddSubQuery tTableQueryStructure ByRef stQueryStructure tTableQuery strSubQ String sChildQueryID
+            Integer iItem
+            Move (SizeOfArray(stQueryStructure.aSubQueries)) to iItem
+            If (sChildQueryID="") Begin
+                Move strSubQ.iTable to sChildQueryID
+            End
+            Move sChildQueryID to stQueryStructure.aSubQueries[iItem].sQueryID
+            Move strSubQ to stQueryStructure.aSubQueries[iItem].stQ
+        End_Procedure
+
+    Procedure AddSubQuery tTableQueryStructure ByRef stQueryStructure String sParentQueryID tTableQuery strSubQ String sChildQueryID
+        Send SendMessageOnQuery sParentQueryID (&stQueryStructure) (RefProc(_AddSubQuery)) Self strSubQ sChildQueryID
+    End_Procedure
+
+        Function _TableQueryStructureNode tTableQueryStructure stQS String sQueryID Boolean ByRef bResolved Returns tTableQueryStructure
+            Integer iItem iItemMax
+            String sValue
+            If (sQueryID=stQS.sQueryID) Begin
+                Move True to bResolved
+                Function_Return stQS
+            End
+            Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                Get _TableQueryStructureNode stQS.aSubQueries[iItem] sQueryID (&bResolved) to stQS
+                If (bResolved) Begin
+                    Function_Return stQS
+                End
+            Loop
+            Function_Return ""
+        End_Function
+    
+    Function TableQueryStructureNode tTableQueryStructure stQS String sQueryID Returns tTableQueryStructure
+        Boolean bResolved 
+        tTableQueryStructure strEmpty
+        Move False to bResolved
+        Get _TableQueryStructureNode stQS sQueryID (&bResolved) to stQS
+        If (not(bResolved)) Begin
+            Error 848 ("TQS: No query handles query ID: "+sQueryID+" (Function TableQueryStructureNode)")
+            Move strEmpty to stQS
+        End
+        Function_Return stQS
+    End_Function
+    
+    Function TableQuery tTableQueryStructure stQueryStructure String sQueryID Returns tTableQuery
+        Get TableQueryStructureNode stQueryStructure sQueryID to stQueryStructure
+        Function_Return stQueryStructure.stQ
+    End_Function
+    
+    Procedure Set TableQuery tTableQueryStructure ByRef stQueryStructure String sQueryID tTableQuery stQ
+    End_Procedure
+    
+//        Procedure _UpdateQuery tTableQueryStructure ByRef stQueryStructure tTableQueryStructure stQS
+//            Move stQS to stQueryStructure
+//        End_Procedure
+//    
+//    Procedure UpdateQuery tTableQueryStructure ByRef stQueryStructure tTableQueryStructure stQS
+//        Send SendMessageOnQuery stQS.stQ.iTable (&stQueryStructure) (RefProc(_UpdateQuery)) Self stQS
+//    End_Procedure
+    Function StatisticsString tTableQueryStructure stQueryStructure String sQueryID Returns String
+        tTableQuery stQ
+        Get TableQuery stQueryStructure sQueryID to stQ
+        Function_Return (StatisticsString(oTQ,stQ))
+    End_Function
+    
+    Function ValidateQueryStructure tTableQueryStructure stQueryStructure Boolean bQuiet Returns Boolean
+        // validate each query (or maybe not since the are validated anyway)
+        // no tables are mentioned twice
+        // the parent relation are sufficient
+    End_Function
+
+        Procedure _FindLoopCallBack tTableQueryStructure ByRef stQueryStructure tTableQueryStructureCallBackMessage stMsg
+            If (stMsg.hMsg<>0) Begin
+                Send stMsg.hMsg of stMsg.hObj (&stQueryStructure)
+            End
+        End_Procedure
+
+        Procedure _FindLoopCallBack2 tTableQueryStructure ByRef stQueryStructure Integer iSubQueryItem tTableQueryStructureCallBackMessage stMsg
+            If (stMsg.hMsg<>0) Begin
+                Send stMsg.hMsg of stMsg.hObj (&stQueryStructure) iSubQueryItem
+            End
+        End_Procedure
+    
+    Procedure RunQueryStructure tTableQueryStructure stQueryStructure
+        Integer iItem iItemMax
+        Send _FindLoopCallBack (&stQueryStructure) stQueryStructure.stOnBeforeMainLoop 
+        While (FindRecord(oTQ,&stQueryStructure.stQ))
+            Send _FindLoopCallBack (&stQueryStructure) stQueryStructure.stOnFoundBeforeSubQueries
+            Move (SizeOfArray(stQueryStructure.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                Send _FindLoopCallBack2 (&stQueryStructure) iItem stQueryStructure.stOnFoundBeforeSubQuery  
+                Send RunQueryStructure stQueryStructure.aSubQueries[iItem]
+                Send _FindLoopCallBack2 (&stQueryStructure) iItem stQueryStructure.stOnFoundAfterSubQuery
+            Loop
+            Send _FindLoopCallBack (&stQueryStructure) stQueryStructure.stOnFoundAfterSubQueries 
+        Loop
+        Send _FindLoopCallBack (&stQueryStructure) stQueryStructure.stOnAfterMainLoop 
+    End_Procedure
+    
+            Function _OptimizeMakeOrderingExact_BestIndex tTableQuery stQ Returns Integer
+                Integer[] aIndices
+                Integer[] aMissingSegmentCount
+                Boolean[][] aabGotIt
+                Boolean bFullySpecified
+                Integer iIndex iIndexItem iIndexMax
+                Integer iColumn iSegmentItem iSegmentMax
+                tocIndex strIndex
+
+                // Analyse indices
+                Get IndexSet of oIndexFunctions stQ.iTable 1 to aIndices // All unique indices
+                Move (SizeOfArray(aIndices)-1) to iIndexMax
+                Move (ResizeArray(aabGotIt,iIndexMax+1)) to aabGotIt
+                For iIndexItem from 0 to iIndexMax
+                    Move aIndices[iIndexItem] to iIndex
+                    Get IndexDefinition of oIndexFunctions stQ.iTable iIndex to strIndex
+                    Move (SizeOfArray(strIndex.aSegments)-1) to iSegmentMax
+                    Move (ResizeArray(aabGotIt[iIndexItem],iSegmentMax+1,False)) to aabGotIt[iIndexItem]
+                    For iSegmentItem from 0 to iSegmentMax
+                        If (_FindOrderBySegment(oTQ,stQ,stQ.iTable,strIndex.aSegments[iSegmentItem].iColumn)<>-1) Begin
+                            Move True to aabGotIt[iIndexItem][iSegmentItem]
+                        End
+                    Loop
+                Loop
+                
+                // If an index is fully specified we pick that
+                For iIndexItem from 0 to iIndexMax
+                    Move True to bFullySpecified
+                    Move (SizeOfArray(aabGotIt[iIndexItem])-1) to iSegmentMax
+                    For iSegmentItem from 0 to iSegmentMax
+                        If (not(aabGotIt[iIndexItem][iSegmentItem])) Begin
+                            Move False to bFullySpecified
+                        End
+                    Loop
+                    If (bFullySpecified) Begin
+                        Function_Return aIndices[iIndexItem]
+                    End
+                Loop
+
+                // Otherwise we just pick the shortes index available (in terms of number of columns in the index)
+                Get ShortestUniqueIndex of oIndexFunctions stQ.iTable to iIndex
+                Function_Return (ShortestUniqueIndex(oIndexFunctions,stQ.iTable))
+            End_Function
+    
+        
+        // Returns true if stQ ordering could be made exact
+        Function _OptimizeMakeOrderingExact tTableQuery ByRef stPQ tTableQuery stCompiledPQ Returns Boolean
+            // An exact ordering means that a record can be uniquely identified from the columns
+            // that participate in the ordering. If not already there we must add columns to the
+            // ordering to make unique record identification possible.
+
+
+            Integer iItem iItemMax
+            Integer iIndex
+            tocIndex strIndex
+            
+            Get _OptimizeMakeOrderingExact_BestIndex stPQ to iIndex
+            
+            If (iIndex<>-1) Begin
+                 Get IndexDefinition of oIndexFunctions stPQ.iTable iIndex to strIndex
+                 Move (SizeOfArray(strIndex.aSegments)-1) to iItemMax
+                 For iItem from 0 to iItemMax
+                    If (_FindOrderBySegment(oTQ,stPQ,stPQ.iTable,strIndex.aSegments[iItem].iColumn)=-1) Begin
+                        // If not column already present in the ordering we add it
+                        Send AddOrderBy of oTQ (&stPQ) stPQ.iTable strIndex.aSegments[iItem].iColumn False False 
+                    End
+                    If (not(_IsColumnIncludedInResultSet(oTQ,stPQ,stPQ.iTable,strIndex.aSegments[iItem].iColumn))) Begin
+                        Send AddResultColumn of oTQ (&stPQ) stPQ.iTable strIndex.aSegments[iItem].iColumn
+                    End
+                 Loop
+            End
+            Else Begin
+                Error 832 "TQS: Can't optimize on parent query. It has no unique indices."
+                Function_Return False
+            End
+            Function_Return True
+        End_Function
+        
+        // Add all relations from stPQ to aTableRelations as "fixed"
+        Function _OptimizeNested_AddParentTableRelations tTableQuery ByRef stPQ tTableQuery ByRef stCQ Integer iTableRelateItem Returns Boolean
+            Integer iItem iItemMax
+            Move (SizeOfArray(stPQ.aTableRelations)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                If (not(_AddTableRelationB2B(oTQ,&stCQ,stPQ.aTableRelations[iItem]))) Begin
+                    Error 837 "TQS: Table relation could not be added"
+                    Function_Return False
+                End
+            Loop
+            Function_Return True
+        End_Function
+        
+        Function _OptimizeNested_ConvertTableRelationFiltersToInnerJoin tTableQuery ByRef stPQ tTableQuery ByRef stCQ Integer iTableRelateItem Returns Boolean
+            // 1. All constrain segments to stPQ.iTable are converted to tablerelation segments and then deleted
+            Integer iItem iItemMax iTargetTable
+            _tTQValueSource strValueLeft strValueRight
+            Move stCQ.aTableRelations[iTableRelateItem].iTargetTable to iTargetTable
+            Move (SizeOfArray(stCQ.aFilters)-1) to iItemMax
+            Move 0 to iItem
+            While (iItem<=iItemMax)
+                Move stCQ.aFilters[iItem].stRightValue to strValueRight
+                If (strValueRight.iTable=iTargetTable) Begin
+                    Move stCQ.aFilters[iItem].strLeftValue to strValueLeft
+                    Send _AddTableRelationInnerJoinSegment of oTQ (&stCQ) strValueLeft.iTable strValueLeft.iColumn stCQ.aFilters[iItem].iComp strValueRight.iTable strValueRight.iColumn
+                    // Now delete it from the constraint array
+                    Move (RemoveFromArray(stCQ.aFilters,iItem)) to stCQ.aFilters
+                    Decrement iItemMax
+                End
+                Else Begin
+                    Increment iItem
+                End
+            Loop
+            Move True to stCQ.aTableRelations[iTableRelateItem].bInnerJoin
+            Function_Return True
+        End_Function
+        
+        Function _OptimizeNested_AddParentConstraints tTableQuery ByRef stPQ tTableQuery ByRef stCQ Integer iTableRelateItem Returns Boolean
+            Integer iItem iItemMax
+            // Copy 'normal' filters
+            Move (SizeOfArray(stPQ.aFilters)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                If (SizeOfArray(stCQ.aFilters)=0) Begin
+                    Move stPQ.aFilters[iItem] to stCQ.aFilters[0]
+                End
+                Else Begin
+                    Move (InsertInArray(stCQ.aFilters,0,stPQ.aFilters[iItem])) to stCQ.aFilters
+                End
+            Loop
+            // Copy filter expressions
+            Move (SizeOfArray(stPQ.aFilterExpressions)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                Move stPQ.aFilterExpressions[iItem] to stCQ.aFilterExpressions[SizeOfArray(stCQ.aFilterExpressions)]
+            Loop
+            Function_Return True
+        End_Function
+
+        Function _OptimizeNested_AddParentOrdering tTableQuery ByRef stPQ tTableQuery ByRef stCQ Integer iTableRelateItem Returns Boolean
+            // insert parent ordering in child query as most significant part
+            Integer iItem iItemMax
+            Boolean bAppendSegments // as opposed to "inserting"
+            Move (SizeOfArray(stCQ.aOrdering)=0) to bAppendSegments
+            Move (SizeOfArray(stPQ.aOrdering)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                If (bAppendSegments) Begin
+                    Move stPQ.aOrdering[iItem] to stCQ.aOrdering[SizeOfArray(stCQ.aOrdering)]
+                End
+                Else Begin
+                    Move (InsertInArray(stCQ.aOrdering,iItem,stPQ.aOrdering[iItem])) to stCQ.aOrdering
+                End
+                If (SizeOfArray(stCQ.aColumnSources)=0) Begin
+                    Send AddResultTable of oTQ (&stCQ) stCQ.iTable
+                End
+                Send AddResultColumn of oTQ (&stCQ) stPQ.aOrdering[iItem].stValueSource.iTable stPQ.aOrdering[iItem].stValueSource.iColumn
+            Loop
+            Function_Return True
+        End_Function
+
+        Procedure OnOptimizeNestedQueriesProgress String sInfo tTableQuery stPQ tTableQuery stCQ Boolean bSkipParentQuery
+            Integer iChannel
+            String sPath
+            String sStatementP sStatementC
+            String sValue
+
+            Procedure_Return
+
+            Get VdfFolderPath of oFileFunctions VDF_PROGRAM to sPath
+            Get AppendPath of oFileFunctions sPath "TableQueryStructureOptimizeLog.txt" to sPath
+            Get AppendOutput of oFileFunctions sPath to iChannel
+            If (iChannel>=0) Begin
+                Writeln channel iChannel ""
+                Writeln ("    "+sInfo+":")
+                Get SQLSelectStatement of oTQ stCQ to sStatementC
+                If (not(bSkipParentQuery)) Begin
+                    Get SQLSelectStatement of oTQ stPQ to sStatementP
+                    Writeln "PQ: " sStatementP
+                End
+                Writeln "CQ: " sStatementC
+                Send CloseOutput of oFileFunctions iChannel
+            End
+        End_Procedure
+
+        // Returns true if no errors occured
+        Function _OptimizeNestedQueries tTableQuery ByRef stPQ tTableQuery ByRef stCQ Boolean ByRef bDidOptimize Returns Boolean
+            Integer iTableRelationUsedForInnerJoin
+            Boolean bCompiles
+            tTableQuery stCompiledPQ
+            Move False to bDidOptimize
+            If (_QueryMethodSQL(oTQ,stCQ) and _QueryMethodSQL(oTQ,stPQ)) Begin // Both tables have to be SQL tables for this to work.
+                
+                If (stCQ.sForceSQLStatement="" and stPQ.sForceSQLStatement="") Begin // And TQ has to be in charge of the SQL
+                    If (stCQ.iLimit=0) Begin // Not if child report has a limit
+                        Move stPQ to stCompiledPQ
+                        Get _CompileQuery of oTQ (&stCompiledPQ) to bCompiles
+                        If (bCompiles) Begin
+                            // Make ordering "exact" on parent query
+                            If (_OptimizeMakeOrderingExact(Self,&stPQ,stCompiledPQ)) Begin
+                                Send OnOptimizeNestedQueriesProgress "PQ ordering made exact" stPQ stCQ False
+                                // Point to a table relation that represents the inner join
+                                Get _FindTableRelation of oTQ stCQ stPQ.iTable to iTableRelationUsedForInnerJoin // Find parent query table in array of child query table relations.
+                                If (iTableRelationUsedForInnerJoin<>-1 and not(stCQ.aTableRelations[iTableRelationUsedForInnerJoin].bFixed)) Begin
+                                    Error 834 "TQS: Can't join queries. Parent query table is outer left joined on child query already"
+                                    Function_Return False
+                                End
+                                Else If (iTableRelationUsedForInnerJoin=-1) Begin
+                                     Send AddTableRelation of oTQ (&stCQ) stCQ.iTable stPQ.iTable // To be used for inner join
+                                     Get _FindTableRelation of oTQ stCQ stPQ.iTable to iTableRelationUsedForInnerJoin
+                                End
+                                
+                                // Now add all relations from stPQ to aTableRelations"
+                                If (_OptimizeNested_AddParentTableRelations(Self,&stPQ,&stCQ,iTableRelationUsedForInnerJoin)) Begin
+                                    Send OnOptimizeNestedQueriesProgress "PQ outer joins added to CQ" stPQ stCQ  True
+                                    If (_OptimizeNested_ConvertTableRelationFiltersToInnerJoin(Self,&stPQ,&stCQ,iTableRelationUsedForInnerJoin)) Begin
+                                        Send OnOptimizeNestedQueriesProgress "CQ filters on main table converted to inner join between CQ" stPQ stCQ True
+                                        If (_OptimizeNested_AddParentOrdering(Self,&stPQ,&stCQ,iTableRelationUsedForInnerJoin)) Begin
+                                            Send OnOptimizeNestedQueriesProgress "PQ ordering added to CQ" stPQ stCQ True
+                                            If (_OptimizeNested_AddParentConstraints(Self,&stPQ,&stCQ,iTableRelationUsedForInnerJoin)) Begin
+                                                Send OnOptimizeNestedQueriesProgress "PQ constraints added to CQ" stPQ stCQ True
+                                                Move True to stCQ._stControlBlock.stInnerJoinCB.bEnabled // This triggers the consolidated inner join strategy
+                                                Move True to bDidOptimize
+                                                Function_Return True
+                                            End
+                                            Else Begin
+                                                Error 840 "TQS: Could not add parent query constraints"
+                                                Function_Return False
+                                            End
+                                        End
+                                        Else Begin
+                                            Error 839 "TQS: Could not add parent query ordering"
+                                            Function_Return False
+                                        End
+                                    End
+                                    Else Begin
+                                        Error 836 "TQS: Can not convert tablerelation to 'inner join'"
+                                        Function_Return False
+                                    End
+                                End
+                                Else Begin
+                                    Error 838 "TQS: Could not add parent table relations"
+                                    Function_Return False
+                                End
+                            End
+                        End
+                        Else Begin
+                            Error 835 "TQS: Parent query can't compile"
+                            Function_Return False
+                        End
+                    End
+                End
+            End
+            Function_Return True
+        End_Function
+
+    Function OptimizeQueryStructure tTableQueryStructure ByRef stQueryStructure Returns Boolean
+        Integer iItem iItemMax
+        Boolean bOptimizeOK bDidOptimized
+        
+        Move True to bOptimizeOK
+
+        Move (SizeOfArray(stQueryStructure.aSubQueries)-1) to iItemMax
+        For iItem from 0 to iItemMax
+            If (bOptimizeOK) Begin
+                Get _OptimizeNestedQueries (&stQueryStructure.stQ) (&stQueryStructure.aSubQueries[iItem].stQ) (&bDidOptimized) to bOptimizeOK
+                If (bOptimizeOK) Begin
+                    Get OptimizeQueryStructure (&stQueryStructure.aSubQueries[iItem]) to bOptimizeOK
+                End
+            End
+        Loop
+        Function_Return bOptimizeOK
+    End_Function
+    
+        Function __CompareSortingSegmentValues String sValue1 String sValue2 Integer iType Returns Integer
+            Date dValue1 dValue2
+            DateTime dtValue1 dtValue2
+            Number nValue1 nValue2
+            If (iType=tqNUMBER) Begin
+                Move sValue1 to nValue1
+                Move sValue2 to nValue2
+                If (nValue1>nValue2) ;
+                        Function_Return tqGT
+                If (nValue1<nValue2) ;
+                        Function_Return tqLT
+            End
+            Else If (iType=tqDATE) Begin
+                Move sValue1 to dValue1
+                Move sValue2 to dValue2
+                If (dValue1>dValue2) ;
+                        Function_Return tqGT
+                If (dValue1<dValue2) ;
+                        Function_Return tqLT
+            End
+            Else If (iType=tqDATETIME) Begin
+                Move sValue1 to dtValue1
+                Move sValue2 to dtValue2
+                If (dtValue1>dtValue2) ;
+                        Function_Return tqGT
+                If (dtValue1<dtValue2) ;
+                        Function_Return tqLT
+            End
+            Else If (iType=tqSTRING) Begin
+                If (sValue1>sValue2) ;
+                        Function_Return tqGT
+                If (sValue1<sValue2) ;
+                        Function_Return tqLT
+            End
+            Else Begin
+                Error 841 ("TQS: Unknown column type ("+String(iType))
+            End
+            Function_Return tqEQ
+        End_Function
+
+            Function _CompareParentChildSortValuesAux2 tTableQuery ByRef stPQ tTableQuery ByRef stCQ Returns Integer
+                Integer iItem iItemMax iParentTable iParentColumn iChildTable iChildColumn iValueType iResult
+                String sParentValue sChildValue
+                Boolean bDescending bUppercase
+                Move (SizeOfArray(stPQ.aOrdering)-1) to iItemMax
+                For iItem from 0 to iItemMax
+                    Move stPQ.aOrdering[iItem].bDescending to bDescending
+                    Move stPQ.aOrdering[iItem].bUppercase to bUppercase
+                    Move stPQ.aOrdering[iItem].stValueSource.iTable to iParentTable
+                    Move stPQ.aOrdering[iItem].stValueSource.iColumn to iParentColumn
+                    Move stPQ.aOrdering[iItem].stValueSource.iType to iValueType
+                    Move stCQ.aOrdering[iItem].stValueSource.iTable to iChildTable
+                    Move stCQ.aOrdering[iItem].stValueSource.iColumn to iChildColumn
+                    Get ResultColumnValue of oTQ (&stPQ) iParentTable iParentColumn to sParentValue
+                    Get ResultColumnValue of oTQ (&stCQ) iChildTable iChildColumn to sChildValue
+                    If (bUppercase) Begin
+                        Move (Uppercase(sParentValue)) to sParentValue
+                        Move (Uppercase(sChildValue)) to sChildValue
+                    End
+                    Get __CompareSortingSegmentValues sParentValue sChildValue iValueType to iResult
+                    If (iResult<>EQ) Begin
+                        If (bDescending) Begin
+                            Move (If(iResult=tqGT,tqLT,tqGT)) to iResult
+                        End
+                        Function_Return iResult
+                    End
+                Loop
+                Function_Return (EQ)
+            End_Function
+
+    Function _CompareParentChildSortValuesAux1 tTableQueryStructure ByRef stQS String sChildQueryID Boolean ByRef bResolved Returns Integer
+        Integer iItem iItemMax iResult
+        Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+        For iItem from 0 to iItemMax
+            If (not(bResolved)) Begin
+                If (stQS.aSubQueries[iItem].sQueryID=sChildQueryID) Begin
+                    Get _CompareParentChildSortValuesAux2 (&stQS.stQ) (&stQS.aSubQueries[iItem].stQ) to iResult
+                    Move True to bResolved
+                    Function_Return iResult
+                End
+                Else Begin
+                    Get _CompareParentChildSortValuesAux1 (&stQS.aSubQueries[iItem]) sChildQueryID (&bResolved) to iResult
+                    If (bResolved) Begin
+                        Function_Return iResult
+                    End
+                End
+            End
+        Loop
+    End_Function
+
+    // Returns tqGT if parent table is ahead of child table
+    //         tqLT if child table is ahead of parent table
+    //         tqEQ if current child record "belongs" to current record
+    Function _CompareParentChildSortValues tTableQueryStructure ByRef stQS String sChildQueryID Returns Integer
+        Boolean bResolved 
+        Integer iResult
+        Move False to bResolved
+        Get _CompareParentChildSortValuesAux1 (&stQS) sChildQueryID (&bResolved) to iResult
+        If (not(bResolved)) Begin
+            Error 842 ("TQS: No query handles query ID: "+sChildQueryID+" (Function _CompareParentChildSortValues)")
+        End
+        Function_Return iResult
+    End_Function
+
+        Procedure _ReUse tTableQueryStructure ByRef stQS String sQueryID Boolean ByRef bResolved
+            Integer iItem iItemMax
+            Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                If (not(bResolved)) Begin
+                    If (sQueryID=stQS.aSubQueries[iItem].sQueryID) Begin
+                        Send ReUse of oTQ (&stQS.aSubQueries[iItem].stQ)
+                        Send _ReadParentSortValues of oTQ (&stQS.stQ) (&stQS.aSubQueries[iItem].stQ)
+                        Move True to bResolved
+                    End
+                    Else Begin
+                        Send _ReUse (&stQS.aSubQueries[iItem]) sQueryID (&bResolved)
+                    End
+                End
+            Loop
+        End_Procedure
+
+    Procedure ReUse tTableQueryStructure ByRef stQS String sQueryID
+        Boolean bResolved
+        Move False to bResolved
+        Send _ReUse (&stQS) sQueryID (&bResolved)
+        If (not(bResolved)) Begin
+            Error 843 ("TQS: No query handles query ID: "+sQueryID+" (Procedure ReUse)")
+        End
+    End_Procedure
+    
+            Procedure _CloseAllInnerJoinStatements tTableQueryStructure ByRef stQS
+                Integer iItem iItemMax
+                Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+                For iItem from 0 to iItemMax
+                    If (stQS.aSubQueries[iItem].stQ._stControlBlock.stInnerJoinCB.bEnabled) Begin
+                        Send _CloseAllInnerJoinStatements (&stQS.aSubQueries[iItem])
+                        Send CloseStatement of oSQLStatementHandles stQS.aSubQueries[iItem].stQ._stControlBlock.stSQLStatementHandle
+                    End
+                Loop
+            End_Procedure
+        
+        Function _FindRecord tTableQueryStructure ByRef stQS String sQueryID Boolean ByRef bResolved Returns Boolean
+            Boolean bFound
+            Integer iItem iItemMax
+            If (sQueryID=stQS.sQueryID) Begin
+                Get FindRecord of oTQ (&stQS.stQ) to bFound
+                If (not(bFound)) Begin
+                    // If we are not ourselves an inner joined query we must
+                    // at this point (recursively) close the statements 
+                    // of all inner joins queries.
+                    If (not(stQS.stQ._stControlBlock.stInnerJoinCB.bEnabled)) Begin
+                        Send _CloseAllInnerJoinStatements (&stQS)
+                    End
+                    
+                End
+                Move True to bResolved
+                Function_Return bFound
+            End
+            Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                Get _FindRecord (&stQS.aSubQueries[iItem]) sQueryID (&bResolved) to bFound
+                If (bResolved) Begin
+                    Function_Return bFound 
+                End
+            Loop
+            Function_Return False
+        End_Function
+        
+    Function FindRecord tTableQueryStructure ByRef stQS String sQueryID Returns Boolean
+        Boolean bResolved bFound
+        Move False to bResolved
+        Get _FindRecord (&stQS) sQueryID (&bResolved) to bFound
+        If (not(bResolved)) Begin
+            Error 844 ("TQS: No query handles query ID: "+sQueryID+" (Function FindRecord)")
+        End
+        Function_Return bFound
+    End_Function
+
+        Function _IsFirstRecord tTableQueryStructure stQS String sQueryID Boolean ByRef bResolved Returns Boolean
+            Boolean bFirst
+            Integer iItem iItemMax
+            If (sQueryID=stQS.sQueryID) Begin
+                Move True to bResolved
+                Function_Return (IsFirstRecord(oTQ,stQS.stQ))
+            End
+            Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                Get _IsFirstRecord (&stQS.aSubQueries[iItem]) sQueryID (&bResolved) to bFirst
+                If (bResolved) Begin
+                    Function_Return bFirst
+                End
+            Loop
+            Function_Return False
+        End_Function
+
+    Function IsFirstRecord tTableQueryStructure stQS String sQueryID Returns Boolean
+        Boolean bResolved bFound
+        Move False to bResolved
+        Get _IsFirstRecord (&stQS) sQueryID (&bResolved) to bFound
+        If (not(bResolved)) Begin
+            Error 845 ("TQS: No query handles query ID: "+sQueryID+" (Function IsFirstRecord)")
+        End
+        Function_Return bFound
+    End_Function
+
+//  Can't be implemented!
+//    Function HasData tTableQueryStructure stQS String sQueryID Returns Boolean
+//    End_Function
+
+        Function _ResultColumnValue tTableQueryStructure ByRef stQS String sQueryID Integer iTable Integer iColumn Boolean ByRef bResolved Returns String
+            Integer iItem iItemMax
+            String sValue
+            If (sQueryID=stQS.sQueryID) Begin
+                Move True to bResolved
+                Function_Return (ResultColumnValue(oTQ,&stQS.stQ,iTable,iColumn))
+            End
+            Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+            For iItem from 0 to iItemMax
+                Get _ResultColumnValue (&stQS.aSubQueries[iItem]) sQueryID iTable iColumn (&bResolved) to sValue
+                If (bResolved) Begin
+                    Function_Return sValue
+                End
+            Loop
+            Function_Return ""
+        End_Function
+        
+    Function ResultColumnValue tTableQueryStructure ByRef stQS String sQueryID Integer iTable Integer iColumn Returns String
+        Boolean bResolved
+        String sValue
+        Move False to bResolved
+        Get _ResultColumnValue (&stQS) sQueryID iTable iColumn (&bResolved) to sValue
+        If (not(bResolved)) Begin
+            Error 846 ("TQS: No query handles query ID: "+sQueryID+" (Function ResultColumnValue)")
+        End
+        Function_Return sValue
+    End_Function
+    
+        Procedure _BreakScan tTableQueryStructure ByRef stQS String sQueryID Boolean ByRef bResolved
+            Integer iItem iItemMax
+            If (stQS.sQueryID=sQueryID) Begin
+                Move True to bResolved
+                Send BreakScan of oTQ (&stQS.stQ)
+            End
+            Else Begin
+                Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+                For iItem from 0 to iItemMax
+                    If (not(bResolved)) Begin
+                        Send _BreakScan (&stQS.aSubQueries[iItem]) sQueryID (&bResolved)
+                    End
+                Loop
+            End
+        End_Procedure
+    
+    Procedure BreakScan tTableQueryStructure ByRef stQS String sQueryID
+        Boolean bResolved
+        Move False to bResolved
+        Send _BreakScan (&stQS) sQueryID (&bResolved)
+        If (not(bResolved)) Begin
+            Error 847 ("TQS: No query handles query ID: "+sQueryID+" (Procedure BreakScan)")
+        End
+    End_Procedure
+
+    Procedure BreakScanAll tTableQueryStructure ByRef stQS
+        Integer iItem iItemMax
+        Send BreakScan of oTQ (&stQS.stQ)
+        Move (SizeOfArray(stQS.aSubQueries)-1) to iItemMax
+        For iItem from 0 to iItemMax
+            Send BreakScanAll (&stQS.aSubQueries[iItem])
+        Loop
+    End_Procedure
+    
+End_Class // cTableQueryStructureFunctions
+
+Global_Variable Integer oTQS
+
+Object _oTQStructureFunctions is a cTableQueryStructureFunctions
+    Move Self to oTQS
+End_Object

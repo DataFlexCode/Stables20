@@ -1,0 +1,32 @@
+#Exclude the following files for DataFlex Projects
+####################################
+*.exe
+*.dbg
+*.manifest
+programs/webapp.log
+programs/WebApp_Tracelog*
+*.dep
+*.fld
+*.pbg
+*.pdp
+*.pkd
+*.prn
+*.prp
+*.err
+*.bak
+appsrc/config
+idesrc
+Data/*.cch
+data/*.dat
+data/*.k*
+data/*.hdr
+
+workspace-copier-config.json
+
+AppHtml/*
+
+#personal preference
+####################################
+/*.ini
+/*.log
+

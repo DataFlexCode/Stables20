@@ -1,0 +1,451 @@
+//> The package defines a cWebHtmlBox_MonthCalendar class that can be used to draw a small
+//> month-calendat-date-picker style calendar.
+//> pkg.doc.end
+
+Use Web\cWebHtmlBoxSture.pkg
+Use Web\HtmlBoxClasses\cWebHtmlBox_BaseClass.pkg
+Use StringFunctions.pkg
+Use StructFunctions.pkg
+Use DateFunctions.pkg
+Use CSSFunctions.pkg
+
+Struct tWHBMonthCalendarDay
+    Boolean bSelected
+    Boolean bUnderline
+    Boolean bBold
+    String  sColor
+    Boolean bClickable
+    String sTooltip
+End_Struct
+
+
+Struct tWHBMonthCalendar
+    Integer iYear
+    Integer iMonth
+    Boolean bDisplayOverflowDates // Overflow dates are dates that belongs to the previous or the next month
+    Boolean bPadRowsTo6
+    Boolean bShadeWeekends
+    Boolean bAllItemsClickable //> If this is true all dates can be selected
+    tWHBMonthCalendarDay[] aDays // 6 rows times 7 days
+    String sFooterText
+    String sDefaultButtonBackgroundColor
+    
+//    String sElementID
+    
+    Date _dBase
+//    Date _d1st // The first of the month
+End_Struct
+
+//> cWebHtmlBox_* classes are meant to be instantiated inside a cWebHtmlBoxSture object (or a cawHtmlBox object if the AppWrap library is used).
+Class cWebHtmlBox_MonthCalendar is a cWebHtmlBox_BaseClass
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String  psLabel
+    End_Procedure
+    
+    Function NewCalendar Integer iYear Integer iMonth String sFooterText Returns tWHBMonthCalendar
+        Integer iFirstItem
+        Date dValue
+        tWHBMonthCalendar stCal
+        Move iYear to stCal.iYear
+        Move iMonth to stCal.iMonth
+        Move sFooterText to stCal.sFooterText
+
+        Get ComposeDate of oDateFunctions 1 stCal.iMonth stCal.iYear to dValue // First day of the month
+//        Move dValue to stCal._d1st
+        
+        Move (DayNumber(oDateFunctions,dValue)-1) to iFirstItem
+        Get DateIncrement of oDateFunctions dValue DS_DAY (0-iFirstItem) to stCal._dBase // .dBase date may be into the previous month
+
+        Function_Return stCal
+    End_Function
+    
+    Function NewCalendarByStartDate Date dStartDate String sFooterText Returns tWHBMonthCalendar
+        Integer iYear iMonth iDay
+        Send DecomposeDate of oDateFunctions dStartDate (&iDay) (&iMonth) (&iYear)
+        Function_Return (NewCalendar(Self,iYear,iMonth,sFooterText))
+    End_Function
+    
+    Procedure HtmlBeginCalendar 
+        String sLabel
+
+        Send AddOpenElement "div"
+        Send AddAttribute "style" "float: left; position: relative;"
+//        Send AddAttribute "style" "position: relative;"
+//        Send AddAttribute "style" "float: left;"
+
+        Get psLabel to sLabel
+        If (sLabel<>"") Begin
+            Send AddElement "h2" sLabel
+        End
+
+        Send AddOpenElement "div"
+        Send AddOpenElement "div"
+        Send AddAttribute "class" "WebDP"
+        Send AddOpenElement "div"
+        Send AddAttribute "class" "WebDP_Wrp"
+    End_Procedure
+
+    Procedure HtmlEndCalendar
+        Send CloseElement // div
+        Send CloseElement // div
+        Send CloseElement // div
+        Send CloseElement // div
+    End_Procedure
+
+//    Procedure RefreshInnerHtml tWHBMonthCalendar strObjectState Integer iModalPanelExitCode
+//        String sInnerHtml
+//        Send XmlToString
+//        Send _InnerBuildCalendarHtml
+//        Send EndXml
+//        Get XmlStringValue to sInnerHtml
+//        Send UpdateInnerHtml strObjectState.sElementID sInnerHtml
+//    End_Procedure
+//
+//    Procedure RefreshContent
+//        tWHBMonthCalendar strObjectState
+//        Get psUniqueID to strObjectState.sElementID
+//        Send RefreshInnerHtml strObjectState 0 // 0=MDEC_None
+//    End_Procedure
+
+    Procedure OnDefineCalendar tWHBMonthCalendar ByRef stC
+    End_Procedure
+
+        Procedure _NewCalendarDay tWHBMonthCalendar stC tWHBMonthCalendarDay stDay Date ByRef dValue Boolean bOverFlow Boolean bEmptyPaddedRow
+            Boolean bDisplay
+            String sClass sValue
+            tCSSRules stCssRules
+                
+            Move ((stC.bDisplayOverflowDates or not(bOverFlow)) and not(bEmptyPaddedRow)) to bDisplay
+            
+            
+            If (bDisplay) Begin
+                Get DateSegment of oDateFunctions dValue DS_DAY to sValue
+            End
+            Else Begin
+                Move (Character(255)) to sValue
+            End   
+            Send AddElement "td" sValue
+
+            // Calculate class:
+            Move "WebDP_Day" to sClass
+            If (stC.bShadeWeekends and DayNumber(oDateFunctions,dValue)>=6) Begin
+                Move (sClass+" WebDP_Weekend") to sClass
+            End
+            If (bDisplay) Begin
+                If (bOverFlow) Begin
+                    Move (sClass+" WebDP_Overflow") to sClass
+                End
+                If (stDay.bSelected) Begin
+                    Move (sClass+" WebDP_Selected") to sClass
+                End
+                If (stDay.bClickable) Begin
+                End
+                If (stDay.bUnderline) Begin
+                    Move (sClass+" WebDP_Today") to sClass
+                End
+            End
+            Send AddAttribute "class" (Trim(sClass))
+            
+            
+
+            Send CSSAppendRule of oCSSFunctions (&stCssRules) "" "" // We don't need a selector
+            If (stDay.sColor<>"") Begin
+                Send CSSAppendRuleProperty of oCSSFunctions (&stCssRules) CSSP_background_color stDay.sColor
+//                Send AddAttribute "style" ("background-color:"+stDay.sColor)
+            End
+            Else Begin
+                If (stC.sDefaultButtonBackgroundColor<>"") Begin
+                    Send CSSAppendRuleProperty of oCSSFunctions (&stCssRules) CSSP_background_color stC.sDefaultButtonBackgroundColor
+                End
+            End
+            If (stDay.bUnderline) Begin
+                Send CSSAppendRuleProperty of oCSSFunctions (&stCssRules) CSSP_text_decoration "underline"
+            End
+            If (stDay.bBold) Begin
+                Send CSSAppendRuleProperty of oCSSFunctions (&stCssRules) CSSP_font_weight "bolder"
+            End
+            If (SizeOfArray(stCssRules.aRules[0].aPropertyValues)>0) Begin
+                Send AddAttribute "style" (CSSStyleAttributeValue(oCSSFunctions,stCssRules.aRules[0].aPropertyValues))
+            End
+
+            If (bDisplay and (stC.bAllItemsClickable or stDay.bClickable)) Begin
+                Send AddOnClickAttributes (psUniqueID(Self)) dValue
+            End
+            
+            If (bDisplay) Begin
+                If (stDay.sTooltip<>"") Begin
+                    Send AddAttribute "title" stDay.sTooltip
+                End
+            End
+
+            Get DateIncrement of oDateFunctions dValue DS_DAY 1 to dValue
+        End_Procedure
+
+        Procedure _HandlePossibleNewRow Integer iItem Date dValue Boolean bNowMoreRealRows
+            Integer iWeek
+            If (Mod(iItem,7)=0 and iItem>0) Begin
+                If (bNowMoreRealRows) Begin
+                    Move 0 to iWeek
+                End
+                Else Begin
+                    Get WeekNumber of oDateFunctions dValue to iWeek
+                End
+                Send CloseElement // tr (close precious row)
+                Send AddOpenElement "tr" // start new row
+                Send AddElement "td" (If(iWeek>0,String(iWeek),""))
+                Send AddAttribute "class" "WebDP_WeekNr"
+            End
+        End_Procedure
+
+    Procedure _InnerBuildCalendarTableBodyContent tWHBMonthCalendar stC
+        Integer iFirstItem iLastItem iItem
+        Integer iWeek
+        Date dValue
+
+        // Header row
+        Send AddOpenElement "tr"
+        Send AddAttribute "class" "WebDP_BodyHead"
+            Send AddElement "th" (Translate(oLanguageFunctions,"ls.date.week"))
+            Send AddAttribute "class" "WebDP_WeekNr"
+            For iItem from 1 to 7
+                Send AddElement "th" (DayNameShort(oDateFunctions,iItem)) // Mon Tue Wed ...
+                If (iItem>=6 and stC.bShadeWeekends) Begin
+                    Send AddAttribute "class" "WebDP_Weekend"
+                End
+            Loop
+        Send CloseElement // tr
+
+        Get ComposeDate of oDateFunctions 1 stC.iMonth stC.iYear to dValue // First day of the month
+        Move (DayNumber(oDateFunctions,dValue)-1) to iFirstItem
+        Move (Integer(LastDateIn(oDateFunctions,DS_MONTH,dValue))-Integer(dValue)+iFirstItem) to iLastItem
+
+        Get DateIncrement of oDateFunctions dValue DS_DAY (0-iFirstItem) to dValue
+        Move (WeekNumber(oDateFunctions,dValue)) to iWeek
+
+        // Open first row and add week number:
+        Send AddOpenElement "tr"
+        Send AddElement "td" iWeek
+        Send AddAttribute "class" "WebDP_WeekNr"
+        Increment iWeek
+        
+        For iItem from 0 to (iFirstItem-1)
+            Send _HandlePossibleNewRow iItem dValue False
+            Send _NewCalendarDay stC stC.aDays[iItem] (&dValue) True False
+        Loop
+        For iItem from iFirstItem to iLastItem
+            Send _HandlePossibleNewRow iItem dValue False
+            Send _NewCalendarDay stC stC.aDays[iItem] (&dValue) False False
+        Loop
+        For iItem from (iLastItem+1) to 41
+            Send _HandlePossibleNewRow iItem dValue True
+            Send _NewCalendarDay stC stC.aDays[iItem] (&dValue) True (iWeek=0)
+        Loop
+        
+        Send CloseElement // close last row
+    End_Procedure
+
+        Function _DateIndex tWHBMonthCalendar stC Date dValue Returns Integer
+            Integer iIndex
+            Move (Integer(dValue)-Date(stC._dBase)) to iIndex
+            Function_Return iIndex
+        End_Function
+        
+//        Procedure _MakeRoomForDate tWHBMonthCalendar ByRef stC Date dValue 
+//            Integer iIndex
+//            Get _DateIndex stC dValue to iIndex
+//            If (iIndex>(SizeOfArray(stC.aDays)-1)) Begin
+//                Move (ResizeArray(stC.aDays,iIndex)) to stC.aDays
+//            End
+//        End_Procedure
+        
+    //> The SetDateSelected method is meant to be called from within the OnMonthCalendarAddData
+    //> procedure. 
+    Procedure SetDateSelected tWHBMonthCalendar ByRef stC Date dValue Boolean bState
+//        Send _MakeRoomForDate (&stC) dValue
+        Move bState to stC.aDays[_DateIndex(Self,stC,dValue)].bSelected
+    End_Procedure
+    
+//    Function GetDateSelected tWHBMonthCalendar stC Date dValue Returns Boolean
+//        Function_Return stC.aDays[_DateIndex(Self,stC,dValue)].bSelected
+//    End_Function
+    
+    //> The SetDateUnderlined method is meant to be called from within the OnMonthCalendarAddData
+    //> procedure.
+    Procedure SetDateUnderlined tWHBMonthCalendar ByRef stC Date dValue Boolean bState
+//        Send _MakeRoomForDate (&stC) dValue
+        Move bState to stC.aDays[_DateIndex(Self,stC,dValue)].bUnderline
+    End_Procedure
+    
+    //> The SetDateBold method is meant to be called from within the OnMonthCalendarAddData
+    //> procedure.
+    Procedure SetDateBold tWHBMonthCalendar ByRef stC Date dValue Boolean bState
+//        Send _MakeRoomForDate (&stC) dValue
+        Move bState to stC.aDays[_DateIndex(Self,stC,dValue)].bBold
+    End_Procedure
+    
+//    Function GetDateUnderlined tWHBMonthCalendar stC Date dValue Returns Boolean
+//        Function_Return stC.aDays[_DateIndex(Self,stC,dValue)].bUnderline
+//    End_Function
+    
+    //> The SetDateClickable method is meant to be called from within the OnMonthCalendarAddData
+    //> procedure. Use to make the dValue date clickable.
+    Procedure SetDateClickable tWHBMonthCalendar ByRef stC Date dValue Boolean bState
+//        Send _MakeRoomForDate (&stC) dValue
+        Move bState to stC.aDays[_DateIndex(Self,stC,dValue)].bClickable
+    End_Procedure
+    
+//    Function GetDateClickable tWHBMonthCalendar stC Date dValue Returns Boolean
+//        Function_Return stC.aDays[_DateIndex(Self,stC,dValue)].bClickable
+//    End_Function
+    
+    //> The SetDateColor method is meant to be called from within the OnMonthCalendarAddData
+    //> procedure. 
+    Procedure SetDateColor tWHBMonthCalendar ByRef stC Date dValue String sHtmlColor
+//        Send _MakeRoomForDate (&stC) dValue
+        Move sHtmlColor to stC.aDays[_DateIndex(Self,stC,dValue)].sColor
+    End_Procedure
+    
+//    Function GetDateColor tWHBMonthCalendar stC Date dValue Returns String
+//        Function_Return stC.aDays[_DateIndex(Self,stC,dValue)].sColor
+//    End_Function
+    
+    Procedure SetTooltip tWHBMonthCalendar ByRef stC Date dValue String sTooltip
+//        Send _MakeRoomForDate (&stC) dValue
+        Move sTooltip to stC.aDays[_DateIndex(Self,stC,dValue)].sTooltip
+    End_Procedure
+
+    Procedure OnMonthCalendarAddData tWHBMonthCalendar ByRef stC Date dFrom Date dTo
+    End_Procedure
+
+    Procedure _InnerBuildCalendarHtml tWHBMonthCalendar stC
+        Integer iFirstItem iLastItem 
+        Date dValue dFrom dTo
+        
+        Send OnDefineCalendar (&stC)
+        
+        Get ComposeDate of oDateFunctions 1 stC.iMonth stC.iYear to dValue // First day of the month
+//        Move dValue to stC._d1st
+        Move (DayNumber(oDateFunctions,dValue)-1) to iFirstItem
+        Move (Integer(LastDateIn(oDateFunctions,DS_MONTH,dValue))-Integer(dValue)+iFirstItem) to iLastItem
+        
+        Get DateIncrement of oDateFunctions dValue DS_DAY (0-iFirstItem) to stC._dBase
+        
+        If (stC.bDisplayOverflowDates) Begin
+            Move stC._dBase to dFrom
+            Get DateIncrement of oDateFunctions dFrom DS_DAY 41 to dTo
+        End
+        Else Begin
+            Move dValue to dFrom
+            Get LastDateIn of oDateFunctions DS_MONTH dValue to dTo
+        End
+                
+        Move (ResizeArray(stC.aDays,42)) to stC.aDays // 6 weeks of 7 days
+        Send OnMonthCalendarAddData (&stC) dFrom dTo
+        
+        Send AddOpenElement "div"
+            Send AddAttribute "style" "margin:5px;"
+
+            Send AddOpenElement "div"
+            Send AddAttribute "class" "WebDP_Head"
+            
+                Send AddOpenElement "div"
+                Send AddAttribute "style" "float: right; position: relative;"
+    
+                    Send AddElement "span" (String(stC.iYear))
+                Send CloseElement // div 
+    
+                Send AddOpenElement "div"
+                Send AddAttribute "style" "float: left; position: relative;"
+                    Send AddElement "span" (MonthName(oDateFunctions,stC.iMonth))
+                Send CloseElement // div 
+                
+                Send AddElement "div" ""
+                Send AddAttribute "style" "clear: both;"
+    
+            Send CloseElement // div
+            
+            Send AddOpenElement "div"
+            Send AddAttribute "class" "WebDP_Body"
+            
+                Send AddOpenElement "div"
+                    Send AddOpenElement "table"
+                        Send AddOpenElement "tbody"
+                        
+                        Send _InnerBuildCalendarTableBodyContent stC
+                        
+                        Send CloseElement // tbody
+                    Send CloseElement // table
+                Send CloseElement // div
+            
+            Send CloseElement // div
+    
+            Send AddOpenElement "div"
+            Send AddAttribute "class" "WebDP_Footer"
+                Send AddElement "div" stC.sFooterText
+            Send CloseElement // div
+        Send CloseElement // div
+
+    End_Procedure
+
+    Procedure BuildCalendarArrayHtml tWHBMonthCalendar[] aCalendar
+        Integer iItem iMax
+        Move (SizeOfArray(aCalendar)-1) to iMax
+        For iItem from 0 to iMax
+            Send HtmlBeginCalendar
+            Send _InnerBuildCalendarHtml aCalendar[iItem]
+            Send HtmlEndCalendar
+        Loop
+    End_Procedure
+    
+        Function _GetHeadCalendar tWHBMonthCalendar ByRef stC Returns tWHBMonthCalendar
+            Date dLastDayInMonth dFirstDayInMonth
+            Integer iLastIndex iFirstItem iDay
+            tWHBMonthCalendarDay[] aLeadInDays
+            tWHBMonthCalendar stHeadCal
+            
+            // First: Extract the first month of stC to stHeadCal (1 week 
+            // after base-Date is guaranteed to reach into the following month)
+            Get NewCalendarByStartDate (DateIncrement(oDateFunctions,stC._dBase,DS_WEEK,1)) stC.sFooterText to stHeadCal
+            Get ComposeDate of oDateFunctions 1 stHeadCal.iMonth stHeadCal.iYear to dLastDayInMonth
+            Get LastDateIn of oDateFunctions DS_MONTH dLastDayInMonth to dLastDayInMonth
+            Get _DateIndex stC dLastDayInMonth to iLastIndex
+//            Move (ResizeArray(stC.aDays,iLastIndex)) to stHeadCal.aDays
+            Move (ResizeArray(stC.aDays,iLastIndex+1)) to stHeadCal.aDays
+            
+            // Second: Remove that calendar from the stC
+            If ((SizeOfArray(stC.aDays)-1)>iLastIndex) Begin
+                // Remove head month from array:
+                Move (CopyArray(stC.aDays,iLastIndex+1,SizeOfArray(stC.aDays)-1)) to stC.aDays
+                // Recalculate _dBase
+                Move (DateIncrement(oDateFunctions,dLastDayInMonth,DS_DAY,1)) to dFirstDayInMonth
+                Move (DayNumber(oDateFunctions,dFirstDayInMonth)-1) to iFirstItem
+                Get DateIncrement of oDateFunctions dFirstDayInMonth DS_DAY (0-iFirstItem) to stC._dBase
+                Move (ResizeArray(aLeadInDays,iFirstItem)) to aLeadInDays
+                Move (AppendArray(aLeadInDays,stC.aDays)) to stC.aDays
+                Send DecomposeDate of oDateFunctions dFirstDayInMonth (&iDay) (&stC.iMonth) (&stC.iYear)
+            End
+            Else Begin
+                Move (ResizeArray(stC.aDays,0)) to stC.aDays
+            End            
+            
+            Function_Return stHeadCal
+        End_Function
+    
+    Function SplitCalendar tWHBMonthCalendar stC Returns tWHBMonthCalendar[]
+        Date dValue
+        tWHBMonthCalendar[] aCalendar
+        
+        While (SizeOfArray(stC.aDays)>0)
+            Get _GetHeadCalendar (&stC) to aCalendar[SizeOfArray(aCalendar)]
+        Loop
+
+        Function_Return aCalendar
+    End_Function
+    
+    Procedure BuildCalendarHtml tWHBMonthCalendar stC
+        tWHBMonthCalendar[] aCal
+        Get SplitCalendar stC to aCal
+        Send BuildCalendarArrayHtml aCal        
+    End_Procedure
+End_Class

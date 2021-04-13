@@ -1,0 +1,115 @@
+// !!! ghoWorkspaceCopier MUST be defined before including this
+
+Use Windows.pkg
+Use cTextEdit.pkg
+
+Use FileFunctions.pkg
+Use Win\StatusPanelMeter.pkg
+
+Use WorkspaceCopier\cWorkspaceCopier.pkg
+
+Object oWorkspaceCopierPanel is a BasicPanel
+    Set Label to ("Workspace Copier: "+psWorkspaceId(ghoWorkspaceCopier))
+    Set Locate_Mode to CENTER_ON_SCREEN
+    Set Size to 238 339
+    Set piMinSize to 238 339
+
+    Property Integer phWorkspaceCopier
+
+    Object oTextEdit is a cTextEdit // First in the focus navigation
+        Set Size to 168 313
+        Set Location to 31 14
+        Set peAnchors to anAll
+        Set Read_Only_State to True
+        Set psTypeFace to "Courier"
+        Set Value to (UCharArrayToString(ToJsonUtf8(ghoWorkspaceCopier)))
+    End_Object
+
+    Object oButtonUpdateConfig is a Button
+        Set Size to 14 247
+        Set Location to 8 12
+        Set Label to 'Update workspace-copier-config.json in workspace root folder'
+        Procedure OnClick
+            Send SaveWorkspaceCopierConfigJSON of ghoWorkspaceCopier
+        End_Procedure
+    End_Object
+
+    Object oButtonCopyWS is a Button
+        Set Size to 14 128
+        Set Location to 216 8
+        Set Label to "Copy workspace to 'Temp' folder"
+        Set peAnchors to anBottomLeft
+
+        Object oWorkspaceCopierExecutor is a cWorkspaceCopierExecutor
+            
+            Procedure OnFileCopy String sSourcePath String sTargetRoot String sTargetSubfolderPath String sTargetFileName tFileData stItem
+                Set Action_Text of ghoStatusPanel to sTargetFileName
+                Forward Send OnFileCopy sSourcePath sTargetRoot sTargetSubfolderPath sTargetFileName stItem
+            End_Procedure
+            
+            Procedure OnFileDontCopy String sSourcePath String sTargetRoot String sTargetSubfolderPath String sTargetFileName tFileData stItem
+                Set Action_Text of ghoStatusPanel to "(filtering files)"
+                Forward Send OnFileDontCopy sSourcePath sTargetRoot sTargetSubfolderPath sTargetFileName stItem
+            End_Procedure
+
+            
+            Function CopyWorkspace String sSourceFolder String sTargetFolder tWsCopier stCopier Returns String
+//                Integer iChannel iItem iMax
+//                String sOutFile
+//                String[] aFiles
+                
+                // Init status panel
+                Send Initialize_StatusPanel of ghoStatusPanel "Copy workspace" sSourceFolder "Copying"
+                Send Start_StatusPanel of ghoStatusPanel
+                Send EnableCancelButton of ghoStatusPanel False // MUST be done *after* Start_StatusPanel
+                
+                Forward Get CopyWorkspace sSourceFolder sTargetFolder stCopier to sTargetFolder
+                
+//                Move (sTargetFolder+".not-copied.txt") to sOutFile
+//
+//                Get DirectOutput of oFileFunctions sOutFile to iChannel
+//                If (iChannel>=0) Begin
+//                    Get paNotCopied to aFiles
+//                    Move (SizeOfArray(aFiles)-1) to iMax
+//                    For iItem from 0 to iMax
+//                        Writeln channel iChannel aFiles[iItem]
+//                    Loop
+//                    Send CloseOutput of oFileFunctions iChannel
+//                    Send NotePad of oFileFunctions sOutFile
+//                End
+                
+                Send Stop_StatusPanel of ghoStatusPanel
+                
+                Function_Return sTargetFolder
+            End_Function
+        End_Object
+    
+        Procedure OnClick
+            Handle hWorkspaceCopier
+            String sSourceFolder sTargetFolder
+            tWsCopier stCopier
+            Get VdfFolderPath of oFileFunctions VDF_APPSRC to sSourceFolder
+            Get PathToFolder of oFileFunctions sSourceFolder to sSourceFolder
+            Get GenerateCopier of ghoWorkspaceCopier to stCopier
+            Get DefaultTargetFolder of oWorkspaceCopierExecutor sSourceFolder to sTargetFolder
+            Get CopyWorkspace of oWorkspaceCopierExecutor sSourceFolder sTargetFolder stCopier to sTargetFolder
+            Send ExploreFolder of oFileFunctions sTargetFolder
+        End_Procedure
+    
+    End_Object
+
+    Object oButtonExplorer is a Button
+        Set Size to 14 141
+        Set Location to 216 190
+        Set Label to 'Open explorer in user-temp folder'
+        Set peAnchors to anBottomRight
+    
+        Procedure OnClick
+            String sFolder
+            Get UserTempFolder of oFileFunctions to sFolder
+            Send ExploreFolder of oFileFunctions sFolder
+        End_Procedure
+    
+    End_Object
+    
+End_Object

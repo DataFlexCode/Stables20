@@ -1,0 +1,50 @@
+Use cWebView.pkg
+Use cWebPanel.pkg
+Use cWebForm.pkg
+
+Use Web\cWebHtmlBoxSture.pkg
+
+Object oTestSvgView is a cWebView
+
+    Set psCaption to "SVG - cWebHtmlBox minitest"
+    
+
+    // Your DDO structure will go here
+
+    Object oWebMainPanel is a cWebPanel
+        Set piColumnCount to 10
+        
+        // place controls here.
+        // Your view will grow as controls are added
+
+//<svg xmlns="http://www.w3.org/2000/svg" version="1.1">
+//   <circle cx="100" cy="50" r="40" stroke="black" stroke-width="2" fill="red" />
+//</svg> 
+//
+        
+        Object oForm2 is a cWebHtmlBoxSture
+            Set piColumnSpan to 0
+            Set pbFillHeight to True
+            Set pbScroll to False
+            Procedure OnBuildHtml
+                Send AddOpenElement "svg"
+                    Send AddAttribute "xmlns" "http://www.w3.org/2000/svg" 
+                    Send AddAttribute "version" "1.1"
+                    Send AddElement "circle" ""
+                    Send AddAttribute "cx" "100"
+                    Send AddAttribute "cy" "50"
+                    Send AddAttribute "r" "40"
+                    Send AddAttribute "stroke" "black"
+                    Send AddAttribute "stroke-width" "2"
+                    Send AddAttribute "fill" "red"
+                Send CloseElement // svg
+            End_Procedure
+            Procedure OnLoad
+                Set psHtml to (InnerHtml(Self))
+            End_Procedure
+        End_Object
+        
+        
+    End_Object 
+
+End_Object

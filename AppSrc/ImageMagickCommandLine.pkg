@@ -1,0 +1,380 @@
+﻿// An explanation of the 'geometri' parameter:     http://www.imagemagick.org/script/command-line-processing.php#geometry
+
+Use cRegistry.pkg
+Use FileFunctions.pkg
+Use StartProg.pkg
+Use WinUuid.pkg
+
+Struct tIMImageSize
+    Integer iWidth
+    Integer iHeight
+End_Struct
+//
+Struct tIMImage
+    String sFileName
+    tIMImageSize stPixelSize
+    String sFileSize
+    String sOrientation
+    String sCompressionType
+    Integer iCompressionQuality
+End_Struct
+
+//> After having instatiated the cImageMagickCommandLine class you need to send ActivateImageMagick
+//> to it in order for it to operate correctly. Doing so will make the object locate the ImageMagick
+//> installation on the machine so it knows with whom to communicate.
+//>
+//> This could be as simple as
+//> <code>
+//> Object oImageMagick is a cImageMagickCommandLine
+//>     Send ActivateImageMagick
+//> End_Object
+//> </code>
+//>
+Class cImageMagickCommandLine is a cObject
+    //>
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String _psImageMagickBinFolder "" // Automatically set by ActivateImageMagick message
+    End_Procedure
+
+    // This constant is needed to enable the cRegistry class to read
+    // value from the 64 bit part of the registry (as if 18.2 we ourselves
+    // are a 32 bit program).
+    Define imckKEY_WOW64_64KEY for |CI$0100
+
+    //> Fish out the install folder of the "current" version ImageMagick from the registry.
+    Function _CurrentVersionFolder Returns String
+        Integer hoRegistry
+        Boolean bFound
+        String sFolder sKey
+
+        Get Create (RefClass(cRegistry)) to hoRegistry
+        Set phRootKey of hoRegistry to HKEY_LOCAL_MACHINE
+        Set pfAccessRights of hoRegistry to (Key_Read ior imckKEY_WOW64_64KEY) // KEY_WOW64_64KEY = |CI$0100 (google: WOW64_64KEY)
+        Get OpenKey of hoRegistry "SOFTWARE\ImageMagick\Current" to bFound
+        If (bFound) Begin
+            If (ValueExists(hoRegistry,"BinPath")) Begin
+                Get ReadString of hoRegistry "BinPath" to sFolder
+            End
+            Send CloseKey of hoRegistry
+        End
+
+        Send Destroy of hoRegistry
+        If (IsDebuggerPresent()) Begin
+            If (sFolder="") Begin
+                Showln "ImageMagick bin folder not found"
+            End
+            Else Begin
+                Showln ("ImageMagick folder: "+sFolder)
+            End
+        End
+        Function_Return sFolder
+    End_Function
+
+    Function IsInstalled Returns Boolean
+        String sFolder
+        Get _CurrentVersionFolder to sFolder
+        Function_Return (sFolder<>"")
+    End_Function
+
+        Function _TempWorkFolder Returns String
+            Boolean bCreated
+            Integer hFolderManagerHandler
+            String sFolder
+#IFDEF Is$WebApp // If web application
+            Get ObjectHandleFolderManager of ghoWebSessionManager to hFolderManagerHandler
+            Get SessionFolder of hFolderManagerHandler True to sFolder
+#ELSE
+            Get UserTempFolder of oFileFunctions to sFolder
+#ENDIF
+            Get AppendPath of oFileFunctions sFolder "imgck" to sFolder
+            Get CreateFolderIfNotExist of oFileFunctions sFolder to bCreated
+            If (not(bCreated)) Begin
+                Error DFERR_PROGRAM ("cImageMagickCommandLine object could not create work folder: "+sFolder)
+            End
+            Function_Return sFolder
+        End_Function
+
+    Function _TempOutFile Returns String // Generate a temp file-name in psWorkFolder folder without extension.
+        String sPath sFileName
+        Get RandomHexUUID to sFileName
+        Get _TempWorkFolder to sPath
+        Move (sPath+"\"+sFileName) to sPath
+        Function_Return sPath
+    End_Function
+
+    //> Call this to "activate" the object so that it knows where to find the
+    //> executables. Will complain if ImageMagick hasn't been installed.
+    Procedure ActivateImageMagick
+        String sPath
+        Get _psImageMagickBinFolder to sPath
+        If (sPath="") Begin
+            Get _CurrentVersionFolder to sPath
+            Set _psImageMagickBinFolder to sPath
+        End
+        If (sPath="") Begin
+            Error DFERR_PROGRAM "ImageMagick not installed on server"
+        End
+    End_Procedure
+
+    Function _ExecutablePath String sCommandName Boolean bEmbedInQuotes Returns String
+        String sBinPath
+        String[] aPath
+        Get _psImageMagickBinFolder to sBinPath
+        Move (StrSplitToArray(sBinPath,"\")) to aPath
+        Move sCommandName to aPath[SizeOfArray(aPath)]
+        Move (StrJoinFromArray(aPath,"\")) to sCommandName
+        If (bEmbedInQuotes) Begin
+            Move ('"'+sCommandName+'"') to sCommandName
+        End
+        Function_Return sCommandName
+    End_Function
+
+    //> Get image information for a number of images (as specified by sImageMask, i.e. "C:\Images\Scanduc2016\*.jpg").
+    Function IdentifyImages String sImageMask Returns tIMImage[]
+        Boolean bSuccess
+        Integer iRunprogramRval iItem iCh iRval
+        String sIdentifyExePath sParams sTempOutFile sTempOutFile2 sValue sCmdLine
+        String[] aValues
+        String sBatFile
+        tIMImage[] aImages
+
+        Get _ExecutablePath "magick.exe" True to sIdentifyExePath
+
+        Get _TempOutFile to sTempOutFile
+        Move (sTempOutFile+".txt") to sTempOutFile
+        Move ('"'+sTempOutFile+'"') to sTempOutFile2
+        Move (Replace(".txt",sTempOutFile,".bat")) to sBatFile
+
+        Move ('"'+sImageMask+'"') to sImageMask
+
+        // Format info can be read here: http://www.comshop.si/shop/img/obdelava_slik/ImageMagick/ImageMagick-6.7.0-8/www/escape.html
+        // According to this article we need to escape % characters: http://www.robvanderwoude.com/escapechars.php
+        Move 'identify -format "%%i|%%b|%%w|%%h|%%C|%%Q|%%[orientation]\n"' to sParams // Move 'identify -format "%i|%b|%w|%h|%C|%Q|%[orientation]\n"' to sParams
+        Move (sIdentifyExePath*sParams*sImageMask+" > "+sTempOutFile2) to sCmdLine
+
+        Get DirectOutput of oFileFunctions sBatFile to iCh
+        If (iCh>=0) Begin
+            Writeln channel iCh sCmdLine
+            Send CloseOutput of oFileFunctions iCh
+        End
+
+//        Get gStartProgram sBatFile "" "" False True to iRunprogramRval
+        Move (ff_ShellExecute(0,"",sBatFile,"","",0)) to iRval
+        Get DeleteFileNew of oFileFunctions sBatFile True to bSuccess
+
+        Get DirectInput of oFileFunctions sTempOutFile to iCh
+        If (iCh>=0) Begin
+            Move 0 to iItem
+            Repeat
+                Readln channel iCh sValue
+                If (not(SeqEof)) Begin
+                    Move (StrSplitToArray(sValue,"|")) to aValues
+                    If (SizeOfArray(aValues)=7) Begin
+                        Move aValues[0] to aImages[iItem].sFileName  // file name full path
+                        Move aValues[1] to aImages[iItem].sFileSize  // "1.972MB" for example
+                        Move aValues[2] to aImages[iItem].stPixelSize.iWidth
+                        Move aValues[3] to aImages[iItem].stPixelSize.iHeight
+                        Move aValues[4] to aImages[iItem].sCompressionType  // image compression type
+                        Move aValues[5] to aImages[iItem].iCompressionQuality   // image compression quality
+                        Move aValues[6] to aImages[iItem].sOrientation   // image orientation:
+                        Increment iItem
+                    End
+                End
+            Until (SeqEof)
+            Send CloseInput of oFileFunctions iCh
+        End
+
+        If (sTempOutFile<>"") Begin
+            EraseFile sTempOutFile
+        End
+        Function_Return aImages
+    End_Function
+
+    //> Get image information for a single image.
+    Function IdentifyImage String sImage Returns tIMImage
+        tIMImage[] aImages
+        Get IdentifyImages sImage to aImages
+        If (SizeOfArray(aImages)=0) Begin
+            Move (ResizeArray(aImages,1)) to aImages
+        End
+        Function_Return aImages[0]
+    End_Function
+
+    Procedure ExecuteMagickCommand String sCommandGroup String sInImagePath String sOutImagePath String sCommandOptions
+        Integer iRunprogramRval
+        String sCmdLine
+
+        If (sCommandGroup eq "convert") Begin
+
+            Move ('"'+Trim(sInImagePath)+'"') to sInImagePath
+            Move ('"'+Trim(sOutImagePath)+'"') to sOutImagePath
+
+            Get _ExecutablePath "magick.exe" True to sCmdLine
+            Move (sCmdLine*sCommandGroup*sInImagePath*sCommandOptions*sOutImagePath) to sCmdLine
+
+            //Error DFERR_PROGRAM "gStartProgram not used anymore"
+            Get gStartProgram sCmdLine "" "" False True to iRunprogramRval
+        End
+        Else Begin
+            Error DFERR_PROGRAM "Unknown sCommandGroup in ImageMagick command"
+        End
+    End_Procedure
+
+
+    //> Resize an image to cover box.
+    //> 
+    //> stImage refers to an existing image and the rescaled image will will be saved as 
+    //> sNewImagePath. In a web application, a download URL for the rescaled image may be 
+    //> obtained like this
+    //> <code>
+    //>     Get DownloadURL of ghoWebResourceManager sNewImagePath to sDownloadPath
+    //>     WebSet psURL of oWebImageLarge to sDownloadPath
+    //> </code>
+    Procedure ImageResizeCoverBox tIMImage stImage Integer iMinWidth Integer iMinHeight String sNewImagePath
+        Integer iOriginalWidth iOriginalHeight iCropOffset iIntermediateValue iRunprogramRval
+        Number nOriginalAspect nBoxAspect
+        String sOptions
+
+        //landscape:              TopLeft      => Dimensions are right
+        //portrait:               RightTop     => Dimensions must be swapped
+        //landscape upside down:  BottomRight  => Dimensions are right
+        //portrait upside down:   LeftBottom   => Dimensions must be swapped
+
+        // Hm! Apparantly it's not necessary to switch coordinates.
+//      If (stImage.sOrientation="RightTop" or stImage.sOrientation="LeftBottom") Begin // swap!
+//          Move stImage.stPixelSize.iWidth to iOriginalHeight
+//          Move stimage.stPixelSize.iHeight to iOriginalWidth
+//      End
+//      Else Begin //  (stImage.sOrientation="TopLeft" or stImage.sOrientation="BottomRight")
+                Move stImage.stPixelSize.iWidth to iOriginalWidth
+                Move stimage.stPixelSize.iHeight to iOriginalHeight
+//      End
+
+        Move "" to sOptions
+
+        If (iOriginalWidth>0 and iOriginalHeight>0) Begin
+            // Scale to the smallest size that covers the entire envelope:
+            Move (Number(iMinWidth)/Number(iMinHeight)) to nBoxAspect
+            Move (Number(iOriginalWidth)/Number(iOriginalHeight)) to nOriginalAspect
+
+            If (nOriginalAspect=nBoxAspect) Begin // Showln "Just right"
+                // Simple scale is enough:
+                Move ('-resize "'+String(iMinWidth)+'x'+String(iMinHeight)+'"') to sOptions
+                Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath sOptions
+            End
+            Else If (nOriginalAspect>nBoxAspect) Begin // Showln "Too wide"
+                // The image is too wide => scale to envelope height, crop to envelope width from horizontal center.
+
+                // Calculate crop offset (horizontal):
+                Move (iOriginalWidth*(Number(iMinHeight)/Number(iOriginalHeight))) to iIntermediateValue
+                Move (iIntermediateValue-iMinWidth/2.0) to iCropOffset
+
+                Move ('-resize "'+String(iMinWidth)+'x'+String(iMinHeight)+'^" ') to sOptions
+                Move (sOptions*'-crop "'+String(iMinWidth)+'x'+String(iMinHeight)+'+'+String(iCropOffset)+'+'+String(0)+'" -auto-orient') to sOptions
+                Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath sOptions
+            End
+            Else If (nOriginalAspect<nBoxAspect) Begin // Showln "Too high"
+                // The image is too high => scale to envelope width, crop to envelope height from vertical center:
+                // Calculate crop offset (vertical):
+
+                Move (iOriginalHeight*(Number(iMinWidth)/Number(iOriginalWidth))) to iIntermediateValue
+                Move (iIntermediateValue-iMinHeight/2.0) to iCropOffset
+
+                Move ('-resize "'+String(iMinWidth)+'^x'+String(iMinHeight)+'"') to sOptions
+                Move (sOptions*'-crop "'+String(iMinWidth)+'x'+String(iMinHeight)+'+'+String(0)+'+'+String(iCropOffset)+'" -auto-orient') to sOptions
+                Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath sOptions
+            End
+        End
+        Else Begin
+            Error DFERR_PROGRAM "Unknown image format"
+        End
+    End_Procedure
+    
+    //> Resize an image to fit within a box.
+    //> 
+    //> stImage refers to an existing image and the rescaled image will will be saved as 
+    //> sNewImagePath. In a web application, a download URL for the rescaled image may be 
+    //> obtained like this
+    //> <code>
+    //>     Get DownloadURL of ghoWebResourceManager sNewImagePath to sDownloadPath
+    //>     WebSet psURL of oWebImageLarge to sDownloadPath
+    //> </code>
+    Procedure ImageResizeFitInside tIMImage stImage Integer iMaxWidth Integer iMaxHeight String sNewImagePath
+        Integer iOriginalWidth iOriginalHeight iCropOffset iIntermediateValue iRunprogramRval
+        Integer iNewWidth iNewHeight
+        Number nOriginalAspect nBoxAspect
+        String sOptions
+
+        //landscape:              TopLeft      => Dimensions are right
+        //portrait:               RightTop     => Dimensions must be swapped
+        //landscape upside down:  BottomRight  => Dimensions are right
+        //portrait upside down:   LeftBottom   => Dimensions must be swapped
+
+        // Hm! Apparantly it's not necessary to switch coordinates.
+//      If (stImage.sOrientation="RightTop" or stImage.sOrientation="LeftBottom") Begin // swap!
+//          Move stImage.stPixelSize.iWidth to iOriginalHeight
+//          Move stimage.stPixelSize.iHeight to iOriginalWidth
+//      End
+//      Else Begin //  (stImage.sOrientation="TopLeft" or stImage.sOrientation="BottomRight")
+                Move stImage.stPixelSize.iWidth to iOriginalWidth
+                Move stimage.stPixelSize.iHeight to iOriginalHeight
+//      End
+
+        Move "" to sOptions
+
+        If (iOriginalWidth>0 and iOriginalHeight>0) Begin
+            // Scale to the smallest size that covers the entire envelope:
+            Move (Number(iOriginalWidth)/Number(iOriginalHeight)) to nOriginalAspect // Normalt: >1
+            Move (Number(iMaxWidth)/Number(iMaxHeight)) to nBoxAspect
+
+            If (nOriginalAspect=nBoxAspect) Begin // Showln "Just right"
+                // Simple scale is enough:
+                Move ('-resize "'+String(iMaxWidth)+'x'+String(iMaxHeight)+'"') to sOptions
+                Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath sOptions
+            End
+            Else If (nOriginalAspect>nBoxAspect) Begin // Showln "Too wide"
+                // The image is too wide =>
+                // scale to envelope width: iMaxWidth (Integer(iMaxWidth/nOriginalAspect))
+                Move iMaxWidth to iNewWidth
+                Move (iMaxWidth/nOriginalAspect) to iNewHeight
+
+                Move ('-resize "'+String(iNewWidth)+'x'+String(iNewHeight)+'" -auto-orient') to sOptions
+                Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath sOptions
+            End
+            Else If (nOriginalAspect<nBoxAspect) Begin // Showln "Too high"
+                // The image is too high =>
+                // scale to envelope height: (iMaxHeight*nOriginalAspect) iMaxHeight
+                Move (iMaxHeight*nOriginalAspect) to iNewHeight
+                Move iMaxHeight to iNewHeight
+
+                // The image is too high => scale to envelope width, crop to envelope height from vertical center:
+                // Calculate crop offset (vertical):
+
+                Move ('-resize "'+String(iNewWidth)+'^x'+String(iNewHeight)+'" -auto-orient') to sOptions
+//                Move (sOptions*'-crop "'+String(iMaxWidth)+'x'+String(iMaxHeight)+'+'+String(0)+'+'+String(iCropOffset)+'" -auto-orient') to sOptions
+                Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath sOptions
+            End
+        End
+        Else Begin
+            Error DFERR_PROGRAM "Unknown image format"
+        End
+    End_Procedure
+
+    Procedure ImageAutoOrient tIMImage stImage String sNewImagePath
+        Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath " -auto-orient"
+    End_Procedure
+
+    //> The procedure takes a (png) icon made up of only one color as referred to in stImage
+    //> and "inverts" the transparent area. The result is written to sNewImagePath.
+    Procedure IconInvertTransparentArea tIMImage stImage String sNewImagePath
+        // This transformation was taken from here:
+        // http://stackoverflow.com/questions/30338164/how-to-use-graphicsmagick-to-negate-the-alpha-channel-of-a-picture
+        Send ExecuteMagickCommand "convert" stImage.sFileName sNewImagePath "-channel a -negate +channel"
+    End_Procedure
+End_Class
+
+Global_Variable Integer oImageMagickCommandLine
+Object _oImageMagickCommandLine is a cImageMagickCommandLine
+    Move Self to oImageMagickCommandLine
+End_Object

@@ -1,0 +1,14 @@
+// Use Language     // Default language setup
+// Sets default languange
+
+Use LangSymb.pkg // Language symbols
+
+#IFDEF LNG_DEFAULT
+#ELSE
+ define LNG_DEFAULT for LNG_ENGLISH // <-- Change default language here
+#ENDIF
+
+
+Integer giCurrentLanguage
+Move LNG_DEFAULT to giCurrentLanguage
+

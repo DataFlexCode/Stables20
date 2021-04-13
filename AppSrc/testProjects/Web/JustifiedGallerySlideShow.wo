@@ -1,0 +1,101 @@
+Use cWebView.pkg
+Use cWebPanel.pkg
+Use cWebForm.pkg
+
+Use Web\cWebHtmlBoxSture.pkg
+Use FileFunctions.pkg
+
+// https://github.com/blueimp/Bootstrap-Image-Gallery/blob/master/README.md
+
+Object oJustifiedGallerySlideShow is a cWebView
+    Set psCaption to "Justified Gallery - Slideshow - cWebHtmlBox subclass"
+
+    // Your DDO structure will go here
+
+    Object oWebMainPanel is a cWebPanel
+        Set piColumnCount to 12
+        Object oBootstrapImageGallery is a cWebHtmlBoxSture
+            Set pbFillHeight to True
+            Set piColumnSpan to 0
+//            Set pbShowBorder to True
+            Set pbServerOnClick to True
+//            Set psBackgroundColor to "black"
+
+//            Procedure OnOrdinaryClick String sAction String sParam
+//            End_Procedure
+
+            Procedure BuildSlideShower
+//<!-- The Gallery as lightbox dialog, should be a child element of the document body -->
+                Send AddOpenElement "div"
+                  Send AddAttribute "id" "blueimp-gallery"
+                  Send AddAttribute "class" "blueimp-gallery"
+                  Send AddElement "div" ""
+                    Send AddAttribute "class" "slides"
+                  Send AddElement "h3" ""
+                    Send AddAttribute "class" "title"
+                  Send AddElement "a" ""
+                    Send AddAttribute "class" "prev"
+                  Send AddElement "a" ""
+                    Send AddAttribute "class" "next"
+                  Send AddElement "a" ""
+                    Send AddAttribute "class" "close"
+                  Send AddElement "a" ""
+                    Send AddAttribute "class" "play-pause"
+                  Send AddElement "ol" ""
+                    Send AddAttribute "class" "indicator"
+                Send CloseElement // div
+//<div id="blueimp-gallery" Class="blueimp-gallery">
+//    <div Class="slides"></div>
+//    <h3 Class="title"></h3>
+//    <a Class="prev"><</a>
+//    <a Class="next">></a>
+//    <a Class="close">ž</a>
+//    <a Class="play-pause"></a>
+//    <ol Class="indicator"></ol>
+//</div>            
+            End_Procedure
+
+            Procedure OnBuildHtml
+                Integer iMax iItem
+                String sFolder sImageFile
+                tFileData[] aFileData
+
+                Get VdfFolderPath of oFileFunctions VDF_APPHTML to sFolder
+                Get AppendPath of oFileFunctions sFolder "JustifiedGallerySample" to sFolder
+                Send ReadFolder of oFileFunctions sFolder "*.jpg" (&aFileData) 1
+                Move (SizeOfArray(aFileData)-1) to iMax
+
+                Send AddOpenElement "div"
+                    Send AddAttribute "id" "myBlueimp"
+                    For iItem from 0 to iMax
+                        Move ("JustifiedGallerySample/"+aFileData[iItem].sFileName) to sImageFile
+                        Send AddOpenElement "a"
+                            Send AddAttribute "href" sImageFile
+                            Send AddAttribute "title" ("billede "+String(iItem+1))
+                            Send AddAttribute "data-gallery" ""
+                            Send AddElement "img" ""
+                                Send AddAttribute "src" sImageFile
+                                Send AddAttribute "alt" ("BILLEDE "+String(iItem+1))
+                        Send CloseElement // a
+                    Loop
+                Send CloseElement // div
+                Send BuildSlideShower
+            End_Procedure
+        End_Object
+
+      Object oInitialiseBtn is a cWebButton
+          Set piColumnSpan to 0
+          Set psCaption to "Init"
+          Procedure OnClick
+              Send initializeBlueimpGallery of oBootstrapImageGallery "myBlueimp"
+          End_Procedure
+      End_Object
+    End_Object 
+
+
+    Procedure OnLoad
+        Forward Send OnLoad
+        Send RefreshContent of oBootstrapImageGallery
+    End_Procedure //
+        
+End_Object

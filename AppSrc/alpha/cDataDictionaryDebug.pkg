@@ -1,0 +1,166 @@
+﻿Use Datadict.pkg
+      
+// A cDataDictionaryDebug DD augments function FindByRowIdEx. If
+// the false is returned, it will generate an error message containing 
+// a list of all the constraints currently active on the DD.
+
+Class cDataDictionaryDebug is a DataDictionary // For debug. Take out.
+    
+        Function FormatFileFieldName Integer iFile Integer iField Returns String
+            String sFile sField sRet
+            Boolean bOpen
+            Get_Attribute DF_FILE_OPENED of iFile to bOpen
+            If (bOpen) Begin
+                Get_Attribute DF_FILE_LOGICAL_NAME of iFile to sFile
+                Get_Attribute DF_FIELD_NAME of iFile iField to sField
+                Function_Return (sFile + "." + sField)
+            End
+            Else Begin
+                Function_Return "file not open"
+            End
+        End_Function
+                
+        Function _FindByRowIdExDDStateAsString Handle hoDD Returns String
+            Integer i j iMain iCurrentDDFile
+            Handle hoDDOther
+            String sFilter
+            String sRval
+            tConstraintDef[] Constraints
+        
+            Get Main_File of hoDD to iMain
+            Get DDOConstraints of hoDD to Constraints
+        
+            Move "Current DDO Constraints" to sRval
+            Move (sRval + Character(10)) to sRval
+            Move (sRval + "  Number of Constraints = " + String(SizeOfArray(Constraints))) to sRval
+            Move (sRval + Character(10)) to sRval
+
+
+            For i from 0 to (SizeOfArray(Constraints)-1)
+
+                If (iCurrentDDFile <> Constraints[i].iFile) Begin
+                    Move (sRval+Character(10)) to sRval
+                    Move Constraints[i].iFile to iCurrentDDFile
+                    If (Constraints[i].iFile<>iMain) Begin
+                        Get Which_Data_Set of hoDD Constraints[i].iFile to hoDDOther
+                    End
+
+                    Else Begin
+                        Move hoDD to hoDDOther
+                    End
+
+                    Move (sRval + "Constraints from ") to sRval
+
+                    If (hoDDOther) Begin
+                        Move (sRval + Object_Label(hoDDOther)) to sRval
+                    End
+
+                    Else Begin
+                        // not sure this could ever happen
+                        Move (sRval + "unknown. No DDO for file " + String(Constraints[i].iFile)) to sRval
+                    End
+
+
+                    If (hoDD<>hoDDOther) Begin
+                        Move (sRval + " (inherited)") to sRval
+                    End
+
+                    Move (sRval + Character(10)) to sRval
+                End
+
+
+
+                Move (sRval + "  " + String(i+1) + " Type=") to sRval
+                Case Begin
+                    Case (Constraints[i].eType=CONST_VALUE) ;
+                        Move (sRval + "CONST_VALUE") to sRval
+                    Case (Constraints[i].eType=CONST_CHILD) ;
+                        Move (sRval + "CONST_CHILD") to sRval
+                    Case (Constraints[i].eType=CONST_FIELD) ;
+                        Move (sRval + "CONST_FIELD") to sRval
+                    Case (Constraints[i].eType=CONST_EXP) ;
+                        Move (sRval + "CONST_EXP") to sRval
+                    Case (Constraints[i].eType=CONST_RELATES) ;
+                        Move (sRval + "CONST_RELATES") to sRval
+                Case End
+
+                If (Constraints[i].eType=CONST_VALUE or Constraints[i].eType=CONST_FIELD) Begin
+                    Move (sRval+" mode=") to sRval
+                    Case Begin
+                        Case (Constraints[i].eMODE=CONST_LT) ;
+                            Move (sRval + "LT") to sRval
+                        Case (Constraints[i].eMODE=CONST_LE) ;
+                            Move (sRval + "LE") to sRval
+                        Case (Constraints[i].eMODE=CONST_EQ) ;
+                            Move (sRval + "EQ") to sRval
+                        Case (Constraints[i].eMODE=CONST_GE) ;
+                            Move (sRval + "GE") to sRval
+                        Case (Constraints[i].eMODE=CONST_GT) ;
+                            Move (sRval + "GT") to sRval
+                        Case (Constraints[i].eMODE=CONST_NE) ;
+                            Move (sRval + "NE") to sRval
+                        Case (Constraints[i].eMODE=CONST_Matches) ;
+                            Move (sRval + "matches") to sRval
+                        Case (Constraints[i].eMODE=CONST_Contains) ;
+                            Move (sRval + "contains") to sRval
+                        Case (Constraints[i].eMODE=CONST_MatchesJumpIn) ;
+                            Move (sRval + "matches_JumpIn") to sRval
+                    Case End
+                End
+
+                If (Constraints[i].eType<>CONST_EXP) Begin
+                    Move (sRval + " File.Field=" + String(Constraints[i].iFile)) to sRval
+                    Move (sRval + "."  + String(Constraints[i].iField)) to sRval
+                    Move (sRval + " (" + FormatFileFieldName(Self,Constraints[i].iFile,Constraints[i].iField) + ")") to sRval
+                End
+
+                If (Constraints[i].eType=CONST_CHILD or Constraints[i].eType=CONST_FIELD) Begin
+                    Move (sRval + " Other File.Field="  + String(Constraints[i].iOtherFile)) to sRval
+                    Move (sRval + "."  + String(Constraints[i].iOtherField)) to sRval
+                    Move (sRval + " (" + FormatFileFieldName(Self,Constraints[i].iOtherFile,Constraints[i].iOtherField) + ")") to sRval
+                End
+
+                Else If (Constraints[i].eType=CONST_VALUE) Begin
+                    Move (sRval + " Value=" + String(Constraints[i].sValue)) to sRval
+                End
+
+                Move (sRval+Character(10)) to sRval
+            Loop
+
+            Move (sRval+Character(10)) to sRval
+            Function_Return sRval
+        End_Function
+
+    Function FindByRowIdEx Integer iFile RowID riId Returns Boolean
+        Boolean bSuccess bFound bRowIdFound
+        String sError sTableName
+
+        Forward Get FindByRowIdEx iFile riId to bSuccess
+        Move (Found) to bFound
+
+        If (not(bSuccess)) Begin
+            Move (Name(Self) + ":") to sError
+            If (IsNullRowID(riId)) Begin
+                Move (sError + Character(10) + "FindByRowIdEx error on Null RowID") to sError
+            End
+            Else Begin
+                Get_Attribute DF_FILE_LOGICAL_NAME of iFile to sTableName
+                Move (sError+Character(10) + "failed to find RowID: "+SerializeRowID(riId) + " in table: " + sTableName) to sError
+                Clear iFile
+                Move (FindByRowID(iFile,riId)) to bRowIdFound
+                If (bRowIdFound) Begin
+                    Move (sError + Character(10) + "FindByRowIdEx: fail, FindByRowID success") to sError
+                End
+                Else Begin
+                    Move (sError+Character(10) + "FindByRowIdEx fail, FindByRowID fail") to sError
+                End
+            End
+            Move (sError+Character(10) + _FindByRowIdExDDStateAsString(Self,Self)) to sError
+            Error DFERR_PROGRAM sError
+        End
+
+        Move (bFound) to Found
+        Function_Return bSuccess
+    End_Function
+End_Class
+

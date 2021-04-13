@@ -1,0 +1,1718 @@
+﻿//> The cExpressionParser implements Dijkstras Shunting-yard algorithm as described
+//> here: http://en.wikipedia.org/wiki/Shunting-yard_algorithm.
+//>
+//> <code>
+//> Object oExpressionParser is a cExpressionParser
+//>     Procedure Demo
+//>         tXPGrammar stGrammar
+//>         tXPToken[] aSymbols
+//>         tXPError stError
+//>         tXPValue stResult
+//>
+//>         // Get a grammer with operators and functions:
+//>         Get NewGrammar to stGrammar
+//>
+//>         // Parse an expression into an array of symbols:
+//>         Get TokenizeString stGrammar '3+4*2/(1-5)^2^3' (&stError) to aSymbols
+//>
+//>         // Convert into "reverse polish notation" that can be used for evaluating the expression:
+//>         Get ReversePolishNotation stGrammar aSymbols (&stError) to aSymbols
+//>
+//>         // Evaluate the expression:
+//>         Get Evaluate stGrammar aSymbols (&stError) to stResult
+//>
+//>         Send Info_Box (stResult.sValue+", type: "+String(stResult.iXPValueType))
+//>     End_Procedure
+//> End_Object
+//>
+//> Send Demo of oExpressionParser
+//> </code>
+//
+// Extending the grammar
+// ---------------------
+//
+//     real soon
+//
+//
+// <code>
+// Class cMyExpressionParser is a cExpressionParser
+// End_Class
+// </code>
+//
+//
+//
+//> pkg.doc.end
+
+Use StackFunctions.pkg
+Use DateFunctions.pkg
+Use StringFunctions.pkg
+
+Define C_EPSymbolLegalFirstCharacters for "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+Define C_EPSymbolLegalCharacters for "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.#"
+
+Enum_List
+    Define XP_Error // As a return type this means that a function or operator errored during eval
+    Define XP_String   
+    Define XP_Numeric  
+    Define XP_Date
+    Define XP_Integer  
+    Define XP_Boolean
+    // this has not been tested. maybe not even implemented:  
+    // Functions may have return type Variant if it varies with the input
+    // (like the 'if' function for example)
+    Define XP_Variant
+End_Enum_List
+
+Use VdfBase.pkg
+
+Struct tXPValue
+    String sValue
+    Integer iXPValueType // XP_String, XP_Numeric, XP_Date, XP_Integer or XP_Boolean
+End_Struct
+
+Struct tXPConstant
+    String sSymbol
+    tXPValue stValue
+End_Struct
+
+Struct _tXPFunctionPointer
+    Integer iObj
+    Integer iMsg
+End_Struct
+
+Struct tXPOperator
+    String sSymbol
+    Integer iArgumentCount
+    Integer iPrecedence
+    Integer iAssociativity // 0=left 1=right
+    _tXPFunctionPointer stDispatch
+End_Struct
+
+Struct tXPFunction
+    String sFunction
+    Integer iArgumentCount
+    Integer iReturnType
+    _tXPFunctionPointer stDispatch
+End_Struct
+
+Struct tXPGrammar
+    tXPOperator[] aOperators
+    tXPFunction[] aFunctions
+    tXPConstant[] aConstants
+//    Integer[]     aAllowedTable // These tables must be open
+    String _sOperatorTestString
+End_Struct                                               7
+
+Struct _tXPSymbolValueRetrievalHint
+    // If iHintType is 0 the hint is decoded in the following way:
+    // 
+    //        If iTable<>0 => table.column
+    //        Else If iConstantIndex>-1 => look up in "constant array"
+    //
+    // If iHintType<>0 then we are in a subclass of cExpressionParser.
+    // cExpressionParser itself is not able to handle such hints.
+    //
+    Integer iHintType 
+    Integer iTable
+    Integer iColumn
+    Integer iXPValueType
+    Integer iConstantIndex
+End_Struct
+
+Struct tXPToken
+    Integer iType
+    Integer iOperatorIndex // If iType is XPTokenType_Operator then this holds the index of the operator passed
+                           // If iType is XPTokenType_FunctionCall then this holds the index of the function passed
+    String sValue //
+    Integer iStartPos
+    
+    _tXPSymbolValueRetrievalHint stValueHint // Only used when iType is XPTokenType_Symbol 
+End_Struct
+
+Enum_List
+    Define XPTokenType_Error            // As a return value this is an error
+    Define XPTokenType_Operator         // Anything from the operator array
+    Define XPTokenType_Symbol           // Variables, Table columns, True and False,
+    Define XPTokenType_FunctionCall
+    Define XPTokenType_NewParameter
+    Define XPTokenType_EndFunctionCall
+    Define XPTokenType_StringConstant
+    Define XPTokenType_NumberConstant
+    Define XPTokenType_IntegerConstant
+    Define XPTokenType_LeftParenthesis
+    Define XPTokenType_RightParenthesis
+End_Enum_List
+
+Struct tXPError
+    Integer iPos
+    String  sErrorText
+End_Struct
+
+Class cExpressionParserBasic is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property tXPGrammar pstrDefaultGrammar
+    End_Procedure
+    
+    Procedure End_Construct_Object
+        Forward Send End_Construct_Object
+        Send ColdBoot
+    End_Procedure
+
+        Function _fTypeCastString tXPValue stValue Returns tXPValue // 1 param
+            If (stValue.iXPValueType=XP_Date) Begin
+                Move (Date(Integer(stValue.sValue))) to stValue.sValue
+            End
+            Else If (stValue.iXPValueType=XP_Boolean) Begin
+                If (Integer(stValue.sValue)<>0) Begin
+                    Move "true" to stValue.sValue
+                End
+                Else Begin
+                    Move "false" to stValue.sValue
+                End
+            End
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fTypeCastNumeric tXPValue stValue Returns tXPValue // 1 param
+            Number nValue
+            Get StringToNumber of oStringFunctions stValue.sValue to nValue
+            Move nValue to stValue.sValue
+            Move XP_Numeric to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fTypeCastDate tXPValue stValue Returns tXPValue // 1 param
+            Date dValue
+            Move stValue.sValue to dValue
+            Move (Integer(dValue)) to stValue.sValue
+            Move XP_Date to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fTypeCastInteger tXPValue stValue Returns tXPValue // 1 param
+            Integer iValue
+            Get StringToNumber of oStringFunctions stValue.sValue to iValue
+            Move iValue to stValue.sValue
+            Move XP_Integer to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fTypeCastBoolean tXPValue stValue Returns tXPValue // 1 param
+            Number nValue
+            If (stValue.iXPValueType=XP_String) Begin
+                If (lowercase(stValue.sValue)="true") Begin
+                    Move "1" to stValue.sValue
+                End
+                Else If (lowercase(stValue.sValue)="false") Begin
+                    Move "0" to stValue.sValue
+                End
+            End
+            Get StringToNumber of oStringFunctions stValue.sValue to nValue
+            Move (nValue<>0) to stValue.sValue
+            Move XP_Boolean to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _CastValueAs tXPValue stValue Integer iXPType Returns tXPValue
+            If (iXPType=stValue.iXPValueType) Begin
+                // If type is already right do nothing
+            End
+            Else If (iXPType=XP_String) Begin
+                Get _fTypeCastString stValue to stValue 
+            End
+            Else If (iXPType=XP_Date) Begin
+                Get _fTypeCastDate stValue to stValue 
+            End
+            Else If (iXPType=XP_Numeric) Begin
+                Get _fTypeCastNumeric stValue to stValue 
+            End
+            Else If (iXPType=XP_Boolean) Begin
+                Get _fTypeCastBoolean stValue to stValue
+            End
+            Else If (iXPType=XP_Integer) Begin
+                Get _fTypeCastInteger stValue to stValue
+            End
+            Function_Return stValue
+        End_Function
+
+    Procedure DefineOperator tXPGrammar ByRef stGrammar String sSymbol Integer iArgs Integer iPrecedence Integer iAssociativity Integer hGet
+        Integer iIndex
+        Move (SizeOfArray(stGrammar.aOperators)) to iIndex
+        Move sSymbol to stGrammar.aOperators[iIndex].sSymbol
+        Move iArgs to stGrammar.aOperators[iIndex].iArgumentCount
+        Move iPrecedence to stGrammar.aOperators[iIndex].iPrecedence
+        Move iAssociativity to stGrammar.aOperators[iIndex].iAssociativity
+        Move hGet to stGrammar.aOperators[iIndex].stDispatch.iMsg
+        Move Self to stGrammar.aOperators[iIndex].stDispatch.iObj
+    End_Procedure
+
+    Procedure DefineFunction tXPGrammar ByRef stGrammar String sFunction Integer iArgCount Integer iValueType Integer hGet
+        Integer iIndex
+        Move (SizeOfArray(stGrammar.aFunctions)) to iIndex
+        Move sFunction to stGrammar.aFunctions[iIndex].sFunction
+        Move iArgCount to stGrammar.aFunctions[iIndex].iArgumentCount
+        Move iValueType to stGrammar.aFunctions[iIndex].iReturnType
+        Move hGet to stGrammar.aFunctions[iIndex].stDispatch.iMsg
+        Move Self to stGrammar.aFunctions[iIndex].stDispatch.iObj
+    End_Procedure
+
+    Procedure DefineConstant tXPGrammar ByRef stGrammar String sSymbol String sValue Integer iValueType
+        tXPConstant strConstant
+        Move (Lowercase(sSymbol)) to strConstant.sSymbol
+        Move sValue to strConstant.stValue.sValue
+        Move iValueType to strConstant.stValue.iXPValueType
+        Move strConstant to stGrammar.aConstants[SizeOfArray(stGrammar.aConstants)]
+    End_Procedure
+    
+    Procedure OnDefineOperators tXPGrammar ByRef stGrammar
+    End_Procedure
+    
+    Procedure OnDefineFunctions tXPGrammar ByRef stGrammar
+    End_Procedure
+    
+    Procedure OnDefineConstants tXPGrammar ByRef stGrammar
+    End_Procedure
+    
+        Function _FindConstantIndex tXPGrammar stGrammar String sSymbol Returns Integer
+            Integer iItem iMax
+            Move (Lowercase(sSymbol)) to sSymbol
+            Move (SizeOfArray(stGrammar.aConstants)-1) to iMax
+            For iItem from 0 to iMax
+                If (sSymbol=stGrammar.aConstants[iItem].sSymbol) Begin
+                    Function_Return iItem
+                End
+            Loop
+            Function_Return -1
+        End_Function
+
+        Function _OperatorTestString tXPGrammar stGrammar Returns String
+            // The return value of this can be used as a fast way to determine if a symbol is an operator.
+            Integer iItem iMax
+            String sValue
+            Move (SizeOfArray(stGrammar.aOperators)-1) to iMax
+            Move " " to sValue
+            For iItem from 0 to iMax
+                Move (sValue+stGrammar.aOperators[iItem].sSymbol+" ") to sValue
+            Loop
+            Function_Return (Uppercase(sValue))
+        End_Function
+
+    Procedure ColdBoot // Reset the default grammar returned by the NewGrammar function.
+        tXPGrammar stGrammar
+        Send OnDefineOperators (&stGrammar)
+        Send OnDefineFunctions (&stGrammar)
+        Send OnDefineConstants (&stGrammar)
+        Get _OperatorTestString stGrammar to stGrammar._sOperatorTestString
+        Set pstrDefaultGrammar to stGrammar
+    End_Procedure
+
+    Function NewGrammar Returns tXPGrammar
+        Function_Return (pstrDefaultGrammar(Self))
+    End_Function
+
+            Function XPSymbolClassId2Text Integer iType Returns String
+                If (iType=XPTokenType_Operator       ) ;
+                        Function_Return "Operator"
+                If (iType=XPTokenType_Symbol         ) ;
+                        Function_Return "Symbol"
+                If (iType=XPTokenType_FunctionCall   ) ;
+                        Function_Return "FunctionCall"
+                If (iType=XPTokenType_NewParameter   ) ;
+                        Function_Return "NewParameter"
+                If (iType=XPTokenType_EndFunctionCall) ;
+                        Function_Return "EndFunctionCall"
+                If (iType=XPTokenType_StringConstant ) ;
+                        Function_Return "StringConstant"
+                If (iType=XPTokenType_NumberConstant ) ;
+                        Function_Return "NumberConstant"
+                If (iType=XPTokenType_IntegerConstant) ;
+                        Function_Return "IntegerConstant"
+                If (iType=XPTokenType_LeftParenthesis ) ;
+                        Function_Return "Operator ("
+                If (iType=XPTokenType_RightParenthesis) ;
+                        Function_Return "Operator )"
+                Function_Return "Unknown class"
+            End_Function
+
+            Function XPValueTypeToString Integer iXPType Returns String
+                If (iXPType=XP_Error  ) ;
+                        Function_Return "unknown"
+                If (iXPType=XP_String ) ;
+                        Function_Return "string"
+                If (iXPType=XP_Numeric) ;
+                        Function_Return "numeric"
+                If (iXPType=XP_Date   ) ;
+                        Function_Return "date"
+                If (iXPType=XP_Integer) ;
+                        Function_Return "integer"
+                If (iXPType=XP_Boolean) ;
+                        Function_Return "boolean"
+                Function_Return "really unknown!"
+            End_Function
+
+            Procedure _RegisterError tXPError ByRef stError Integer iPos String sErrorText
+                If (stError.iPos=0) Begin
+                    Move iPos to stError.iPos
+                    Move sErrorText to stError.sErrorText
+                End
+            End_Procedure
+
+            Function _ErrorState tXPError stError Returns Boolean
+                Function_Return (stError.sErrorText<>"")
+            End_Function
+
+            Procedure _ParseStringConstant Address pExpr Integer ByRef iPos Integer iLen tXPToken ByRef strToken tXPError ByRef stError
+                Boolean bFin
+                String sQuotChar sChar
+                Move strToken.sValue to sQuotChar
+                Move "" to strToken.sValue
+                Move False to bFin
+                Repeat
+                    Increment iPos
+                    If (iPos<=iLen) Begin
+                        Move (Character(DeRefC(pExpr,iPos))) to sChar
+                        If (sChar=sQuotChar) Begin
+                            Move True to bFin
+                            Increment iPos // Skip quotation character
+                        End
+                        Else Begin
+                            Move (strToken.sValue+sChar) to strToken.sValue
+                        End
+                    End
+                    Else Begin
+                        Move True to bFin
+                        Send _RegisterError (&stError) -1 ("Missing "+sQuotChar+" in expression")
+                    End
+                Until (bFin)
+            End_Procedure
+
+            Procedure _ParseNumericConstant Address pExpr Integer ByRef iPos Integer iLen tXPToken ByRef strToken tXPError ByRef stError
+                Boolean bFin bDecimalPlaceIndendified
+                String sChar
+
+                Move (strToken.sValue=".") to bDecimalPlaceIndendified
+                Repeat
+                    Increment iPos
+                    If (iPos<=iLen) Begin
+                        Move (Character(DeRefC(pExpr,iPos))) to sChar
+                        If ("0123456789." contains sChar) Begin
+                            Move (strToken.sValue+sChar) to strToken.sValue
+                            If (sChar=".") Begin
+                                If (bDecimalPlaceIndendified) Begin
+                                    Move True to bFin
+                                    Send _RegisterError (&stError) iPos "Redundant decimal separator encountered"
+                                End
+                                Else Begin
+                                    Move True to bDecimalPlaceIndendified
+                                End
+                            End
+                        End
+                        Else Begin
+                            Move True to bFin
+                        End
+                    End
+                    Else Begin
+                        Move True to bFin
+                    End
+                Until (bFin)
+                Move (If(bDecimalPlaceIndendified,XPTokenType_NumberConstant,XPTokenType_IntegerConstant)) to strToken.iType
+            End_Procedure
+
+            Procedure _ParseOperator String sOperatorTestString Address pExpr Integer ByRef iPos Integer iLen tXPToken ByRef strToken tXPError ByRef stError
+                Boolean bFin
+                String sChar
+                Move False to bFin
+                Repeat
+                    Increment iPos
+                    If (iPos<=iLen) Begin
+                        Move (Character(DeRefC(pExpr,iPos))) to sChar
+                        If (sOperatorTestString contains (" "+Uppercase(strToken.sValue+sChar)+" ")) Begin
+                            Move (strToken.sValue+sChar) to strToken.sValue
+                        End
+                        Else Begin
+                            Move True to bFin
+                        End
+                    End
+                    Else Begin
+                        Move True to bFin
+                    End
+                Until (bFin)
+                If (not(sOperatorTestString contains (" "+Uppercase(strToken.sValue)+" "))) Begin
+                    Send _RegisterError (&stError) strToken.iStartPos ("Symbol not recognised: "+strToken.sValue)
+                End
+            End_Procedure
+
+                Procedure _ParseResolveFunctionCall tXPGrammar stGrammar tXPToken ByRef strToken Integer iArgCount tXPError ByRef stError
+                    Boolean bResolved bFunctionFound
+                    Integer iMax iItem
+                    String sFunction
+                    Move (SizeOfArray(stGrammar.aFunctions)-1) to iMax
+                    Move 0 to iItem
+                    Move False to bResolved
+                    Move False to bFunctionFound
+                    Move (Uppercase(strToken.sValue)) to sFunction
+                    While (not(bResolved) and iItem<=iMax)
+                        If (sFunction=Uppercase(stGrammar.aFunctions[iItem].sFunction)) Begin
+                            Move True to bFunctionFound
+                            If (iArgCount=stGrammar.aFunctions[iItem].iArgumentCount) Begin
+                                Move iItem to strToken.iOperatorIndex
+                                Move True to bResolved
+                            End
+                        End
+                        Increment iItem
+                    Loop
+                    If (not(bResolved)) Begin
+                        If (bFunctionFound) Begin
+                            Send _RegisterError (&stError) strToken.iStartPos ("Wrong number of parameters (function: "+strToken.sValue+")")
+                        End
+                        Else Begin
+                            Send _RegisterError (&stError) strToken.iStartPos ("Function not defined: ("+strToken.sValue+")")
+                        End
+                    End
+                End_Procedure
+
+                Procedure _ParseResolveOperator tXPGrammar stGrammar tXPToken ByRef strToken Integer iArgCount tXPError ByRef stError
+                    Boolean bResolved bOperatorFound
+                    Integer iMax iItem
+                    String sOperator
+                    Move (SizeOfArray(stGrammar.aOperators)-1) to iMax
+                    Move 0 to iItem
+                    Move False to bResolved
+                    Move False to bOperatorFound
+                    Move (Uppercase(strToken.sValue)) to sOperator
+                    While (not(bResolved) and iItem<=iMax)
+                        If (sOperator=Uppercase(stGrammar.aOperators[iItem].sSymbol)) Begin
+                            Move True to bOperatorFound
+                            If (iArgCount=stGrammar.aOperators[iItem].iArgumentCount) Begin
+                                Move iItem to strToken.iOperatorIndex
+                                Move True to bResolved
+                            End
+                        End
+                        Increment iItem
+                    Loop
+                    If (not(bResolved)) Begin
+                        If (bOperatorFound) Begin
+                            Send _RegisterError (&stError) strToken.iStartPos ("Wrong number of operands (operator: "+strToken.sValue+")")
+                        End
+                        Else Begin
+                            Send _RegisterError (&stError) strToken.iStartPos ("Operator not defined: ("+strToken.sValue+")")
+                        End
+                    End
+                End_Procedure
+            
+
+                    Function OnColumnNameToNumber Integer iTable String sName Returns Integer
+                        Integer iMax iField
+                        String sFieldName
+                        Move (Lowercase(sName)) to sName
+                        Get_Attribute DF_FILE_NUMBER_FIELDS of iTable to iMax
+                        For iField from 1 to iMax
+                            Get_Attribute DF_FIELD_NAME of iTable iField to sFieldName
+                            If (sName=Lowercase(sFieldName)) Begin
+                                Function_Return iField
+                            End
+                        Loop
+                        If (sName="recnum") Begin
+                            Function_Return 0
+                        End
+                        Function_Return -1 // not found
+                    End_Function
+                    
+                    Function OnTableNameToNumber String sLogicalName Returns Integer
+                        Integer iTable
+                        String sValue
+                        Move (Uppercase(sLogicalName)) to sLogicalName
+                        Move 0 to iTable
+                        Repeat
+                            Get_Attribute DF_FILE_NEXT_USED of iTable to iTable
+                            If (iTable<>0) Begin
+                                Get_Attribute DF_FILE_LOGICAL_NAME of iTable to sValue
+                                If (sLogicalName=Uppercase(sValue)) Begin
+                                    Function_Return iTable
+                                End
+                            End
+                        Until (iTable=0)
+                
+                        Function_Return -1
+                    End_Function
+                    
+                    Function OnIsTableColumnReference String sSymbol Returns Boolean
+                        Integer iTable iColumn
+                        String[] aValues
+                        Send SplitString of oStringFunctions sSymbol "." False False (&aValues)
+                        Get OnTableNameToNumber aValues[0] to iTable
+                        If (iTable>0) Begin
+                            Get OnColumnNameToNumber iTable aValues[1] to iColumn
+                            If (iColumn>0) Begin
+                                Function_Return True
+                            End
+                        End
+                        Function_Return False
+                    End_Function
+                    
+                    Function OnGetTableColumnType Integer iTable Integer iColumn Returns Integer
+                        Integer iDFType
+                        Get_Attribute DF_FIELD_TYPE of iTable iColumn to iDFType
+
+                        If (iDFType=DF_ASCII or iDFType=DF_TEXT)       ;
+                                Function_Return XP_String
+                        If (iDFType=DF_DATE or iDFType=DF_DATETIME)    ;
+                                Function_Return XP_Date
+                        If (iDFType=DF_BCD)                            ;
+                                Function_Return XP_Numeric
+                        Function_Return XP_Error // Unknown type
+                    End_Function
+                    
+                    Procedure OnAddTableColumnHint tXPToken ByRef stSymbolToken tXPError ByRef stError
+                        Integer iTable iColumn iPos
+                        String sSymbol sTable sColumn
+                        Move stSymbolToken.sValue to sSymbol
+                        Move (Pos(".",sSymbol)) to iPos
+                        If (iPos>0) Begin
+                            Move (Left(sSymbol,iPos-1)) to sTable
+                            Move (Replace(sTable+".",sSymbol,"")) to sColumn
+                            Get OnTableNameToNumber sTable to iTable
+                            If (iTable>0) Begin
+                                Get OnColumnNameToNumber iTable sColumn to iColumn
+                                If (iColumn>0) Begin
+                                    Move iTable to stSymbolToken.stValueHint.iTable
+                                    Move iColumn to stSymbolToken.stValueHint.iColumn
+                                    Get OnGetTableColumnType iTable iColumn to stSymbolToken.stValueHint.iXPValueType
+                                End
+                                Else Begin
+                                    Send _RegisterError (&stError) stSymbolToken.iStartPos ("ExprParser: '"+sColumn+"' not a column name in table '"+sTable+"'")
+                                End
+                            End
+                            Else Begin
+                                Send _RegisterError (&stError) stSymbolToken.iStartPos ("ExprParser: '"+sTable+"' not a table name")
+                            End
+                        End
+                        Else Begin
+                            Send _RegisterError (&stError) stSymbolToken.iStartPos ("ExprParser: '"+sSymbol+"' not a table column reference")
+                        End
+                    End_Procedure
+
+            //> This is the procedure to augment for handling of special symbols (or all symbols).
+            Procedure OnAddSymbolRetrievalHint tXPGrammar stGrammar tXPToken ByRef stSymbolToken tXPError ByRef stError Variant[] aSymbolContext
+                String sSymbol
+                Move stSymbolToken.sValue to sSymbol
+                If (OnIsTableColumnReference(Self,sSymbol)) Begin
+                    Send OnAddTableColumnHint (&stSymbolToken) (&stError)
+                End
+                Else Begin
+                    Get _FindConstantIndex stGrammar sSymbol to stSymbolToken.stValueHint.iConstantIndex
+                End
+                // Check to see if its a
+            End_Procedure
+
+            // Translate for example column names into iTable iColumn format instead
+            Procedure _AddSymbolValueRetrievalHints tXPGrammar stGrammar tXPToken[] ByRef aTokens tXPError ByRef stError Variant[] aSymbolContext
+                Integer iItem iMax
+                Move (SizeOfArray(aTokens)-1) to iMax
+                For iItem from 0 to iMax
+                    If (aTokens[iItem].iType=XPTokenType_Symbol) Begin
+                        Send OnAddSymbolRetrievalHint stGrammar (&aTokens[iItem]) (&stError) aSymbolContext
+                    End
+                Loop
+            End_Procedure
+            
+            // Will signal which tables needs to be active before calling an expression
+            Function HintedTables tXPToken[] aTokens Returns Integer[]
+                Integer iMax iItem
+                Integer[] aTables
+                Move (SizeOfArray(aTokens)-1) to iMax
+                For iItem from 0 to iMax
+                    If (aTokens[iItem].stValueHint.iTable>0) Begin
+                        If (IntegerAddToSet(oStackFunctions,&aTables,aTokens[iItem].stValueHint.iTable)) Begin
+                        End                        
+                    End
+                Loop
+                Function_Return aTables
+            End_Function
+
+            // Procedure _TokenizeFinalize will resolve all operators and function calls according to
+            // the number of arguments each of them has as compared to the grammar.
+            Procedure _TokenizeFinalize tXPGrammar stGrammar tXPToken[] ByRef aTokens tXPError ByRef stError
+                Integer iItem iMax iType iCountIndex iOperatorArgCount
+                Integer[] aFunctionCallStack //
+                Integer[] aFunctionParameterCounters //
+                Move (SizeOfArray(aTokens)-1) to iMax
+                For iItem from 0 to iMax
+                    Move aTokens[iItem].iType to iType
+                    If (iType=XPTokenType_FunctionCall) Begin
+                        Send IntegerPush of oStackFunctions iItem (&aFunctionCallStack)
+                        Move (SizeOfArray(aFunctionCallStack)-1) to iCountIndex
+                        Move 0 to aFunctionParameterCounters[iCountIndex]
+                    End
+                    Else If (iType=XPTokenType_EndFunctionCall) Begin
+                        If (aTokens[iItem-1].iType<>XPTokenType_FunctionCall) Begin
+                            Increment aFunctionParameterCounters[iCountIndex]
+                        End
+                        Send _ParseResolveFunctionCall stGrammar (&aTokens[aFunctionCallStack[iCountIndex]]) aFunctionParameterCounters[iCountIndex] (&stError)
+                        Send IntegerDrop of oStackFunctions (&aFunctionCallStack)
+                        Move (SizeOfArray(aFunctionCallStack)-1) to iCountIndex
+                    End
+                    Else If (iType=XPTokenType_NewParameter) Begin
+                        // Check for un-motivated new parameter 
+                        If (IntegerIsEmpty(oStackFunctions,aFunctionCallStack)) Begin
+                            Send _RegisterError (&stError) aTokens[iItem].iStartPos "Un-motivated new parameter"
+                        End
+                        Else Begin
+                            Increment aFunctionParameterCounters[iCountIndex]
+                        End
+                    End
+                    Else If (iType=XPTokenType_Operator) Begin
+                        Move 0 to iOperatorArgCount
+                        // If there's something in front of it and it is not a left parenthesis or a comma
+                        // then we have a parameter to the left of the operator:
+                        If (iItem>0 and aTokens[iItem-1].iType<>XPTokenType_FunctionCall and ;
+                                        aTokens[iItem-1].iType<>XPTokenType_NewParameter) Begin
+                            Increment iOperatorArgCount
+                        End
+                        // If there is something after it and it is not a right parenthesis or a function-end or a new parameter
+                        // then we have a parameter to the right of us:
+                        If (iItem<iMax and aTokens[iItem+1].sValue<>")" and aTokens[iItem+1].iType<>XPTokenType_NewParameter) Begin
+                            Increment iOperatorArgCount
+                        End
+                        Send _ParseResolveOperator stGrammar (&aTokens[iItem]) iOperatorArgCount (&stError)
+                    End
+                Loop
+            End_Procedure
+
+    // The aContext_opt parameter is only there to provide descendant classes with a way to implement passing context.
+    Function TokenizeString tXPGrammar stGrammar String sExpression tXPError ByRef stError Variant[] aContext_opt Returns tXPToken[]
+        Boolean bTokenFound bFin
+        Boolean bTokenTerminatedByLeftParenthesis
+        Boolean[] aParenthesisLevelIsFunctionCall
+        Integer iTokenCount
+        Integer iPos iLen
+        Integer iItem iMax
+        String sChar sTemp
+        Address pExpr
+        tXPToken[] aTokens
+        tXPToken strNextToken
+        tXPError strNoError
+        Variant[] aSymbolContext
+        
+        If (num_arguments>=4) Begin
+            Move aContext_opt to aSymbolContext
+        End
+
+        Move (AddressOf(sExpression)) to pExpr
+        Move (Length(sExpression)) to iLen
+        Move 0 to iPos // First character is in position 0
+
+        Move strNoError to stError
+        Move 0 to iTokenCount
+
+        Repeat // until (not(bTokenFound))
+
+            // Remove leadin whitespace (and set bTokenFound):
+            Move False to bFin
+            Move False to bTokenFound
+            Repeat
+                If (iPos<=iLen) Begin
+                    Move (Character(DeRefC(pExpr,iPos))) to sChar
+                    If (Ascii(sChar)<=32) Begin
+                        Increment iPos // Skip blanks, tabs, cr/lf's and the lot
+                    End
+                    Else Begin
+                        Move True to bFin
+                        Move True to bTokenFound
+                    End
+                End
+                Else begin
+                    Move True to bFin
+                End
+            Until bFin
+
+            If (bTokenFound) Begin
+                // Initialize new token:
+                Move -1 to strNextToken.iType         // Type unknown
+                Move "" to strNextToken.sValue         // No value yet
+                Move -1 to strNextToken.stValueHint.iConstantIndex
+                Move 0 to strNextToken.stValueHint.iHintType // HintType=0 => This class handles the hint.
+                Move (iPos+1) to strNextToken.iStartPos    // Start position of the symbol
+                Move -1 to strNextToken.iOperatorIndex
+
+                Move (Character(DeRefC(pExpr,iPos))) to sChar
+                Move sChar to strNextToken.sValue
+
+                If (C_EPSymbolLegalFirstCharacters contains sChar) Begin
+                    // It's an operator or a symbol. Or a function call if the terminating character is a "("
+                    Move False to bFin
+                    Move False to bTokenTerminatedByLeftParenthesis
+                    Repeat
+                        Increment iPos
+                        If (iPos<=iLen) Begin
+                            Move (Character(DeRefC(pExpr,iPos))) to sChar
+                            If (C_EPSymbolLegalCharacters contains sChar) Begin
+                                Move (strNextToken.sValue+sChar) to strNextToken.sValue
+                            End
+                            Else Begin
+                                If (sChar="(") Begin // A function call most likely!
+                                    Move True to bTokenTerminatedByLeftParenthesis
+                                End
+                                Move True to bFin
+                            End
+                        End
+                        Else Begin
+                            Move True to bFin
+                        End
+                    Until (bFin)
+                    If (stGrammar._sOperatorTestString contains (" "+Uppercase(strNextToken.sValue)+" ")) Begin
+                        // Operator!
+                        Move XPTokenType_Operator to strNextToken.iType
+                        If (strNextToken.sValue=")") Begin
+                            If (BooleanPop(oStackFunctions,&aParenthesisLevelIsFunctionCall)) Begin
+                                Move XPTokenType_EndFunctionCall to strNextToken.iType
+                            End
+                        End
+                    End
+                    Else Begin
+                        // Symbol or function call!
+                        If (bTokenTerminatedByLeftParenthesis) Begin // Then it's a function call
+//                                Increment iPos // Skip the parenthesis
+                            Move XPTokenType_FunctionCall to strNextToken.iType
+                            Send BooleanPush of oStackFunctions True (&aParenthesisLevelIsFunctionCall)
+                        End
+                        Else Begin
+                            Move XPTokenType_Symbol to strNextToken.iType
+                        End
+                    End
+                End
+                Else Begin // Operator or constant
+                    If (("'"+'"') contains sChar) Begin // Constant string?
+                        // String constant
+                        Send _ParseStringConstant pExpr (&iPos) iLen (&strNextToken) (&stError)
+                        Move XPTokenType_StringConstant to strNextToken.iType
+                    End
+                    Else If ("0123456789." contains sChar) Begin // Constant numeric?
+                        Send _ParseNumericConstant pExpr (&iPos) iLen (&strNextToken) (&stError)
+                    End
+                    Else Begin // Then operator
+                        Send _ParseOperator stGrammar._sOperatorTestString pExpr (&iPos) iLen (&strNextToken) (&stError)
+                        Move XPTokenType_Operator to strNextToken.iType
+                        If (strNextToken.sValue="(") Begin
+                            If (not(iTokenCount>0 and aTokens[iTokenCount-1].iType=XPTokenType_FunctionCall)) Begin
+                                Send BooleanPush of oStackFunctions False (&aParenthesisLevelIsFunctionCall)
+                            End
+                            Move XPTokenType_LeftParenthesis to strNextToken.iType
+                        End
+                        Else If (strNextToken.sValue=")") Begin
+                            If (BooleanIsEmpty(oStackFunctions,aParenthesisLevelIsFunctionCall)) Begin
+                                Send _RegisterError (&stError) strNextToken.iStartPos "Cannot unstack )"
+                            End
+                            Else Begin
+                                If (BooleanPop(oStackFunctions,&aParenthesisLevelIsFunctionCall)) Begin
+                                    Move XPTokenType_EndFunctionCall to strNextToken.iType
+                                End
+                                Else Begin
+                                    Move XPTokenType_RightParenthesis to strNextToken.iType
+                                End
+                            End
+                        End
+                        Else If (strNextToken.sValue=",") Begin
+                            Move XPTokenType_NewParameter to strNextToken.iType
+                        End
+                    End
+                End
+
+                Move strNextToken to aTokens[iTokenCount]
+                Increment iTokenCount
+            End
+        Until (not(bTokenFound))
+
+        If (SizeOfArray(aParenthesisLevelIsFunctionCall)>0) Begin
+            If (stError.iPos=0) Begin
+                Move -1 to stError.iPos
+                Move "Unbalanced parenthesis" to stError.sErrorText
+            End
+        End
+
+        Send _TokenizeFinalize stGrammar (&aTokens) (&stError)
+
+        // Translate for example column names into iTable iColumn format instead
+        Send _AddSymbolValueRetrievalHints stGrammar (&aTokens) (&stError) aSymbolContext
+        
+        Function_Return aTokens
+    End_Function
+
+        Procedure _OperatorStackPush tXPToken[] ByRef aOperatorStack tXPToken strToken
+            Move strToken to aOperatorStack[SizeOfArray(aOperatorStack)]
+        End_Procedure
+
+        Function _OperatorStackPop tXPToken[] ByRef aOperatorStack Returns tXPToken
+            Integer iIndex
+            tXPToken strToken strEmptyToken
+            Move (SizeOfArray(aOperatorStack)-1) to iIndex
+            If (iIndex>=0) Begin
+                Move aOperatorStack[iIndex] to strToken
+                Move (RemoveFromArray(aOperatorStack,iIndex)) to aOperatorStack
+                Function_Return strToken
+            End
+            Error DFERR_OPERATOR ("ExprParser: Attempt to pop from empty stack")
+            Function_Return strEmptyToken
+        End_Function
+
+        Function _OperatorStackCopy tXPToken[] aOperatorStack Returns tXPToken
+            Integer iIndex
+            tXPToken strEmptyToken
+            Move (SizeOfArray(aOperatorStack)-1) to iIndex
+            If (iIndex>=0) Begin
+                Function_Return aOperatorStack[iIndex]
+            End
+            Error DFERR_OPERATOR ("ExprParser: Attempt to copy from empty stack")
+            Function_Return strEmptyToken
+        End_Function
+
+        Function _OperatorStackIsEmpty tXPToken[] aOperatorStack Returns Boolean
+            Function_Return (SizeOfArray(aOperatorStack)=0)
+        End_Function
+
+    Function ReversePolishNotation tXPGrammar stGrammar tXPToken[] aInputTokens tXPError ByRef stError Returns tXPToken[]
+        Integer iInputTokensMax iInputTokenIndex iAssociativity iPrecendence
+        Boolean bFin
+        tXPToken[] aOutputTokens
+        tXPToken[] aOperatorStack
+        tXPToken strInputToken strToken
+
+        Move (SizeOfArray(aInputTokens)) to iInputTokensMax
+        Move 0 to iInputTokenIndex
+        
+        While (iInputTokenIndex<iInputTokensMax)
+            Move aInputTokens[iInputTokenIndex] to strInputToken
+            If (strInputToken.iType=XPTokenType_IntegerConstant or ;
+                strInputToken.iType=XPTokenType_NumberConstant or ;
+                strInputToken.iType=XPTokenType_StringConstant or ;
+                strInputToken.iType=XPTokenType_Symbol) Begin
+                // If the token is an operand, then add it to the output
+                Move aInputTokens[iInputTokenIndex] to aOutputTokens[SizeOfArray(aOutputTokens)]
+            End
+            Else If (strInputToken.iType=XPTokenType_FunctionCall) Begin
+                // If the token is a function, then push it onto the stack
+                Send _OperatorStackPush (&aOperatorStack) aInputTokens[iInputTokenIndex]
+            End
+            Else If (strInputToken.iType=XPTokenType_NewParameter) Begin
+                // If the token is a function argument separator (e.g., a comma):
+                //   Until the token at the top of the stack is a left parenthesis, pop operators
+                //   off the stack onto the output queue. If no left parentheses are encountered,
+                //   either the separator was misplaced or parentheses were mismatched.
+                Repeat
+                    Get _OperatorStackCopy aOperatorStack to strToken
+                    If (strToken.iType<>XPTokenType_LeftParenthesis and strToken.iType<>XPTokenType_Error) Begin
+                        Get _OperatorStackPop (&aOperatorStack) to aOutputTokens[SizeOfArray(aOutputTokens)]
+                    End
+                Until (strToken.iType=XPTokenType_LeftParenthesis or strToken.iType=XPTokenType_Error)
+            End
+            Else If (strInputToken.iType=XPTokenType_Operator) Begin
+                // If the token is an operator, o1, then:
+                //     While there is an operator token, o2, at the top of the stack, and
+                //         either o1 is left-associative and its precedence is less than or equal to that of o2,
+                //         or o1 has precedence less than that of o2,
+                //     pop o2 off the stack, onto the Output queue;
+                // push o1 onto the stack.
+
+                // associativity and precedence of o1:
+                Move stGrammar.aOperators[strInputToken.iOperatorIndex].iAssociativity to iAssociativity
+                Move stGrammar.aOperators[strInputToken.iOperatorIndex].iPrecedence to iPrecendence
+                Repeat
+                    Move True to bFin // We assume we are done
+                    If (not(_OperatorStackIsEmpty(Self,aOperatorStack))) Begin
+                        Get _OperatorStackCopy aOperatorStack to strToken // o2
+                        If (strToken.iType=XPTokenType_Operator) Begin // Check that its an actual operator (and not "(" for example)
+                            // Note that I have reversed the order of precedence according to prescription:
+                            If ((iAssociativity=0 and ;
+                                  iPrecendence>=stGrammar.aOperators[strToken.iOperatorIndex].iPrecedence) or ;
+                                  iPrecendence>stGrammar.aOperators[strToken.iOperatorIndex].iPrecedence) Begin
+                                Move False to bFin // Oh! We weren't done at all
+                            End
+                        End
+                    End
+                    If (not(bFin)) Begin
+                        Move (_OperatorStackPop(Self,&aOperatorStack)) to aOutputTokens[SizeOfArray(aOutputTokens)]
+                    End
+                Until (bFin)
+                Send _OperatorStackPush (&aOperatorStack) strInputToken
+            End
+            Else If (strInputToken.iType=XPTokenType_LeftParenthesis) Begin
+                // If the token is a left parenthesis, then push it onto the stack.
+                Send _OperatorStackPush (&aOperatorStack) strInputToken
+            End
+            Else If (strInputToken.iType=XPTokenType_RightParenthesis or ;
+                     strInputToken.iType=XPTokenType_EndFunctionCall) Begin
+                // If the token is a right parenthesis:
+                //    * Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
+                //    * Pop the left parenthesis from the stack, but not onto the output queue.
+                //    * If the token at the top of the stack is a function token, pop it onto the Output queue.
+                //    * If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
+                Repeat
+                    Move True to bFin
+                    If (_OperatorStackIsEmpty(Self,aOperatorStack)) Begin
+                        Send _RegisterError (&stError) -1 "Mismatched parenthesis"
+                    End
+                    Else Begin
+                        Get _OperatorStackPop (&aOperatorStack) to strToken
+                        If (strToken.iType<>XPTokenType_LeftParenthesis) Begin
+                            Move False to bFin
+                            Move strToken to aOutputTokens[SizeOfArray(aOutputTokens)]
+                        End
+                        Else Begin
+                            // Do nothing
+                        End
+                    End
+                Until (bFin)
+                If (not(_OperatorStackIsEmpty(Self,aOperatorStack))) Begin
+                    Get _OperatorStackCopy aOperatorStack to strToken
+                End
+                If (strToken.iType=XPTokenType_FunctionCall) Begin
+                    Get _OperatorStackPop (&aOperatorStack) to aOutputTokens[SizeOfArray(aOutputTokens)]
+                End
+            End
+            Else Begin
+                Send Info_Box "Token not handled! (error)"
+            End
+            Increment iInputTokenIndex
+        Loop
+
+//      When there are no more tokens to read:
+//        While there are still operator tokens in the stack:
+//          If the operator token on the top of the stack is a parenthesis, then there are mismatched parentheses.
+//          Pop the operator onto the output queue.
+//
+        While (not(_OperatorStackIsEmpty(Self,aOperatorStack)))
+            Get _OperatorStackPop (&aOperatorStack) to strToken
+            If (strToken.iType=XPTokenType_LeftParenthesis or strToken.iType=XPTokenType_RightParenthesis) Begin
+                Send _RegisterError (&stError) -1 "Mis-matched parenthesis"
+            End
+            Move strToken to aOutputTokens[SizeOfArray(aOutputTokens)]
+        Loop
+
+        Function_Return aOutputTokens
+    End_Function
+    
+    //> Augment to handle variable names or table column references
+    Function OnGetSymbolValue tXPToken strToken Variant[] aCallbackContext Returns tXPValue
+        tXPValue stValue
+        Move XP_Error to stValue.iXPValueType
+        Move ("Don't know "+strToken.sValue) to stValue.sValue
+        Function_Return stValue
+    End_Function
+    
+    //> Should return true if the symbol name passed in strToken.sValue is legal. If one returns true
+    //> on a symbol name that same name should be handled by function OnGetSymbolValue 
+    Function OnGetSymbolNameIsLegal tXPToken strToken Variant[] aCallbackContext Returns Boolean
+        Function_Return False
+    End_Function
+    
+    Function _OnGetSymbolValue tXPGrammar stGrammar tXPToken strToken Variant[] aCallbackContext Returns tXPValue
+        tXPValue stValue
+        If (strToken.stValueHint.iTable<>0) Begin // Retrieve table.column value
+            Get_Field_Value strToken.stValueHint.iTable strToken.stValueHint.iColumn to stValue.sValue
+            Move (Rtrim(stValue.sValue)) to stValue.sValue
+            Move strToken.stValueHint.iXPValueType to stValue.iXPValueType
+        End
+        Else If (strToken.stValueHint.iConstantIndex>=0) Begin // Retrieve constant value
+            Move stGrammar.aConstants[strToken.stValueHint.iConstantIndex] to stValue
+        End
+        Else Begin
+            Get OnGetSymbolValue strToken aCallbackContext to stValue
+        End
+        Function_Return stValue
+    End_Function
+    
+    Function _ExecuteFunctionOrOperand _tXPFunctionPointer strFuncPointer tXPValue[] aParameters tXPError ByRef stError Returns tXPValue
+        tXPValue stValue
+        Integer hFunc hObject
+        Move strFuncPointer.iMsg to hFunc
+        Move strFuncPointer.iObj to hObject
+        Get hFunc of hObject aParameters to stValue
+        Function_Return stValue
+    End_Function
+
+        //From http://en.wikipedia.org/wiki/Reverse_Polish_notation
+        // 
+        //   * While there are input tokens left
+        //      * Read the next token from input.
+        //      * If the token is a value
+        //          * Push it onto the stack.
+        //      * Otherwise, the token is an operator (operator here includes both operators, and functions).
+        //          * It is known a priori that the operator takes n arguments.
+        //          * If there are fewer than n values on the stack
+        //              * (Error) The user has not input sufficient values in the expression.
+        //          * Else, Pop the top n values from the stack.
+        //          * Evaluate the operator, with the values as arguments.
+        //          * Push the returned results, If any, back onto the stack.
+        //   * If there is only one value in the stack
+        //      * That value is the result of the calculation.
+        //   * If there are more values in the stack
+        //      * (Error) The user input has too many values.
+
+        Function _Evaluate tXPGrammar stGrammar tXPToken[] aInput Variant[] aCallbackContext tXPError ByRef stError Returns tXPValue
+            Integer iItem iMaxSymbol
+            Integer iOperatorIndex
+            Integer iStackSize
+            Integer hFunc hObject
+    
+            tXPValue[] aOperandStack
+            tXPToken strToken
+            tXPOperator strOperator
+            tXPFunction strFunction
+            tXPValue stValue
+    
+            Move (SizeOfArray(aInput)-1) to iMaxSymbol
+            For iItem from 0 to iMaxSymbol
+                Move aInput[iItem] to strToken
+    
+                If (strToken.iType=XPTokenType_IntegerConstant) Begin
+                    // If the token is a value push it on the operand stack:
+                    Move strToken.sValue to stValue.sValue
+                    Move XP_Integer to stValue.iXPValueType
+                    Move stValue to aOperandStack[SizeOfArray(aOperandStack)]
+                End
+                Else If (strToken.iType=XPTokenType_NumberConstant) Begin
+                    Move strToken.sValue to stValue.sValue
+                    Move XP_Numeric to stValue.iXPValueType
+                    Move stValue to aOperandStack[SizeOfArray(aOperandStack)]
+                End
+                Else If (strToken.iType=XPTokenType_StringConstant) Begin
+                    Move strToken.sValue to stValue.sValue
+                    Move XP_String to stValue.iXPValueType
+                    Move stValue to aOperandStack[SizeOfArray(aOperandStack)]
+                End
+                Else If (strToken.iType=XPTokenType_Symbol) Begin
+                    Get _OnGetSymbolValue stGrammar strToken aCallbackContext to stValue
+                    Move stValue to aOperandStack[SizeOfArray(aOperandStack)]
+                End
+                Else If (strToken.iType=XPTokenType_FunctionCall) Begin
+                    Move stGrammar.aFunctions[strToken.iOperatorIndex] to strFunction
+                    Move (SizeOfArray(aOperandStack)) to iStackSize
+                    If (iStackSize>=strFunction.iArgumentCount) Begin
+                        Get _ExecuteFunctionOrOperand strFunction.stDispatch (CopyArray(aOperandStack,iStackSize-strFunction.iArgumentCount,iStackSize-1)) (&stError) to stValue
+                        If (strFunction.iArgumentCount>0) Begin
+                            // Pop params off the stack
+                            Move (ResizeArray(aOperandStack,iStackSize-strFunction.iArgumentCount)) to aOperandStack
+                        End
+                        Move stValue to aOperandStack[SizeOfArray(aOperandStack)] // Push result back on
+                    End
+                    Else Begin
+                        Send _RegisterError (&stError) strToken.iStartPos "ExprParser: Eval error, not enough parameters on stack (function call)"
+                    End
+                End
+                Else If (strToken.iType=XPTokenType_Operator) Begin
+                    Move stGrammar.aOperators[strToken.iOperatorIndex] to strOperator
+                    Move (SizeOfArray(aOperandStack)) to iStackSize
+                    If (iStackSize>=strOperator.iArgumentCount) Begin
+                        Get _ExecuteFunctionOrOperand strOperator.stDispatch (CopyArray(aOperandStack,iStackSize-strOperator.iArgumentCount,iStackSize-1)) (&stError) to stValue
+                        If (strOperator.iArgumentCount>0) Begin
+                            // Pop params off the stack
+                            Move (ResizeArray(aOperandStack,iStackSize-strOperator.iArgumentCount)) to aOperandStack
+                        End
+                        Move stValue to aOperandStack[SizeOfArray(aOperandStack)] // Push result back on
+                    End
+                    Else Begin
+                        Send _RegisterError (&stError) strToken.iStartPos "ExprParser: Eval error, not enough parameters on stack (operator)"
+                    End
+                End
+                Else Begin
+                    Send _RegisterError (&stError) strToken.iStartPos "ExprParser: Token type not recognised by Evaluate function"
+                End
+    
+            Loop
+            
+            If (SizeOfArray(aOperandStack)=1) Begin
+                Function_Return aOperandStack[0]
+            End
+            Else If (SizeOfArray(aOperandStack)=0) Begin
+                Send _RegisterError (&stError) -1 "ExprParser: Missing return value"
+            End
+            Else Begin
+                Send _RegisterError (&stError) -1 "ExprParser: Too many operands on stack"
+            End
+            Move XP_Error to stValue.iXPValueType
+            
+            Function_Return stValue
+        End_Function
+    
+    Function Evaluate tXPGrammar stGrammar tXPToken[] aInput tXPError ByRef stError Returns tXPValue
+        Variant[] aEmpty
+        Function_Return (_Evaluate(Self,stGrammar,aInput,aEmpty,&stError))
+    End_Function
+    
+    Function EvaluateCallbackContext tXPGrammar stGrammar tXPToken[] aInput Variant[] aCallbackContext tXPError ByRef stError Returns tXPValue
+        Function_Return (_Evaluate(Self,stGrammar,aInput,aCallbackContext,&stError))
+    End_Function
+    
+End_Class
+
+Class cExpressionParser is a cExpressionParserBasic
+
+            Function _RoundNumber Number nValue Integer iDecimals Returns Number
+                String sValue
+                Get NumberToString of oStringFunctions nValue iDecimals to sValue
+                Function_Return (Number(sValue))
+            End_Function
+
+// Number functions
+
+        Function _fRound tXPValue[] aParameters Returns tXPValue
+            Integer iDecimal
+            Number nValue
+            tXPValue strRval strParam
+            Move aParameters[0] to strParam
+            If (strParam.iXPValueType=XP_Integer or strParam.iXPValueType=XP_Numeric) Begin
+                Move strParam.sValue to nValue
+                Move aParameters[1] to strParam
+                If (strParam.iXPValueType=XP_Integer) Begin
+                    Get _RoundNumber nValue iDecimal to strRval.sValue
+                    Move XP_Numeric to strRval.iXPValueType
+                End
+                Else Begin
+                    Move XP_Error to strRval.iXPValueType
+                    Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'Round'"
+                End
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'Round'"
+            End
+            Function_Return strRval
+        End_Function
+
+// Date functions
+
+        Function _fToday tXPValue[] aParameters Returns tXPValue // No params
+            tXPValue stValue
+            Move (Integer(SystemDate(oDateFunctions))) to stValue.sValue
+            Move XP_Date to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fDateSegment tXPValue[] aParameters Integer iDateSegment Returns tXPValue
+            Date dValue
+            tXPValue strParam strRval
+            Move aParameters[0] to strParam
+            If (strParam.iXPValueType=XP_Date) Begin
+                Move strParam.sValue to dValue
+                Get DateSegment of oDateFunctions dValue iDateSegment to strRval.sValue
+                Move XP_Integer to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'DateSegment'"
+            End
+            Function_Return strRval
+        End_Function
+
+        Function _fMonth tXPValue[] aParameters Returns tXPValue
+            Function_Return (_fDateSegment(Self,aParameters,DS_MONTH))
+        End_Function
+        Function _fWeek tXPValue[] aParameters Returns tXPValue
+            Function_Return (_fDateSegment(Self,aParameters,DS_WEEK))
+        End_Function
+        Function _fYear tXPValue[] aParameters Returns tXPValue
+            Function_Return (_fDateSegment(Self,aParameters,DS_YEAR))
+        End_Function
+        Function _fDay tXPValue[] aParameters Returns tXPValue
+            Function_Return (_fDateSegment(Self,aParameters,DS_DAY))
+        End_Function
+        Function _fDayName tXPValue[] aParameters Returns tXPValue
+            Integer iIndex
+            tXPValue strParam strRval
+            Move aParameters[0] to strParam
+            If (strParam.iXPValueType=XP_Integer) Begin
+                Move strParam.sValue to iIndex
+                Get DayName of oDateFunctions iIndex to strRval.sValue
+                Move XP_String to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'DayName'"
+            End
+            Function_Return strRval
+        End_Function
+        Function _fMonthName tXPValue[] aParameters Returns tXPValue
+            Integer iIndex
+            tXPValue strParam strRval
+            Move aParameters[0] to strParam
+            If (strParam.iXPValueType=XP_Integer) Begin
+                Move strParam.sValue to iIndex
+                Get MonthName of oDateFunctions iIndex to strRval.sValue
+                Move XP_String to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'MonthName'"
+            End
+            Function_Return strRval
+        End_Function
+
+// Operators
+        Function _fExponential tXPValue[] aParameters Returns tXPValue
+            tXPValue stValue
+            Number nBase nPower
+            Get StringToNumber of oStringFunctions aParameters[0].sValue to nBase
+            Get StringToNumber of oStringFunctions aParameters[1].sValue to nPower
+            Move (nBase^nPower) to stValue.sValue
+            Move XP_Numeric to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+        
+        Function _fUnaryMinus tXPValue[] aParameters Returns tXPValue
+            tXPValue stValue
+            Number nValue
+            Get StringToNumber of oStringFunctions aParameters[0].sValue to nValue
+            Move (-nValue) to stValue.sValue
+            Move XP_Numeric to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+        
+        Function _fUnaryPlus tXPValue[] aParameters Returns tXPValue
+            Function_Return aParameters[0]
+        End_Function
+        
+        Function _fMultiply tXPValue[] aParameters Returns tXPValue
+            tXPValue strVal1 strVal2
+            tXPValue strRval
+            Move aParameters[0] to strVal1
+            Move aParameters[1] to strVal2
+            If (strVal1.iXPValueType=XP_Integer or strVal1.iXPValueType=XP_Numeric or strVal1.iXPValueType=XP_Boolean) Begin
+                Move (StringToNumber(oStringFunctions,strVal1.sValue)*StringToNumber(oStringFunctions,strVal2.sValue)) to strRval.sValue
+                Move (If(strVal1.iXPValueType=XP_Integer and strVal2.iXPValueType=XP_Integer,XP_Integer,XP_Numeric)) to strRval.iXPValueType
+                If (strRval.iXPValueType=XP_Integer) Begin
+                    Move (Integer(strRval.sValue)) to strRval.sValue
+                End
+            End
+            Else If (strVal1.iXPValueType=XP_String) Begin
+                Move (strVal1.sValue*strVal2.sValue) to strRval.sValue
+                Move XP_String to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to '*' (multiply)"
+            End
+            Function_Return strRval
+        End_Function
+        
+        Function _fDivide tXPValue[] aParameters Returns tXPValue
+            tXPValue strVal1 strVal2
+            tXPValue strRval
+            Move aParameters[0] to strVal1
+            Move aParameters[1] to strVal2
+            If (strVal1.iXPValueType=XP_Integer or strVal1.iXPValueType=XP_Numeric or strVal1.iXPValueType=XP_Boolean) Begin
+                Move (Number(strVal1.sValue)/Number(strVal2.sValue)) to strRval.sValue
+                Move (If(strVal1.iXPValueType=XP_Integer and strVal2.iXPValueType=XP_Integer,XP_Integer,XP_Numeric)) to strRval.iXPValueType
+                If (strRval.iXPValueType=XP_Integer) Begin
+                    Move (Integer(strRval.sValue)) to strRval.sValue
+                End
+            End
+            Else If (strVal1.iXPValueType=XP_String) Begin
+                Move (strVal1.sValue-strVal2.sValue) to strRval.sValue
+                Move XP_String to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to '/' (divide)"
+            End
+            Function_Return strRval
+        End_Function
+
+        Function _fRemainder tXPValue[] aParameters Returns tXPValue
+            tXPValue strVal1 strVal2
+            tXPValue strRval
+            Move aParameters[0] to strVal1
+            Move aParameters[1] to strVal2
+            If (strVal1.iXPValueType=XP_Integer or strVal1.iXPValueType=XP_Numeric) Begin
+                Move (Mod(Integer(strVal1.sValue),Integer(strVal2.sValue))) to strRval.sValue
+                Move XP_Integer to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to '%' (remainder)"
+            End
+            Function_Return strRval
+        End_Function
+        
+        Function _fPlus tXPValue[] aParameters Returns tXPValue
+            tXPValue strVal1 strVal2
+            tXPValue strRval
+            Move aParameters[0] to strVal1
+            Move aParameters[1] to strVal2
+            If (strVal1.iXPValueType=XP_Integer or strVal1.iXPValueType=XP_Numeric) Begin
+                Move (Number(strVal1.sValue)+Number(strVal2.sValue)) to strRval.sValue
+                Move (If(strVal1.iXPValueType=XP_Integer and strVal2.iXPValueType=XP_Integer,XP_Integer,XP_Numeric)) to strRval.iXPValueType
+                If (strRval.iXPValueType=XP_Integer) Begin
+                    Move (Integer(strRval.sValue)) to strRval.sValue
+                End
+            End
+            Else If (strVal1.iXPValueType=XP_Date) Begin
+                Move (Date(Integer(strVal1.sValue)+Integer(strVal2.sValue))) to strRval.sValue
+                Move XP_Date to strRval.iXPValueType
+            End
+            Else If (strVal1.iXPValueType=XP_String) Begin
+                Move (strVal1.sValue+strVal2.sValue) to strRval.sValue
+                Move XP_String to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to '+' (plus)"
+            End
+            Function_Return strRval
+        End_Function
+
+        Function _fMinus tXPValue[] aParameters Returns tXPValue
+            tXPValue strVal1 strVal2
+            tXPValue strRval
+            Move aParameters[0] to strVal1
+            Move aParameters[1] to strVal2
+            If (strVal1.iXPValueType=XP_Integer or strVal1.iXPValueType=XP_Numeric) Begin
+                Move (Number(strVal1.sValue)-Number(strVal2.sValue)) to strRval.sValue
+                Move (If(strVal1.iXPValueType=XP_Integer and strVal2.iXPValueType=XP_Integer,XP_Integer,XP_Numeric)) to strRval.iXPValueType
+                If (strRval.iXPValueType=XP_Integer) Begin
+                    Move (Integer(strRval.sValue)) to strRval.sValue
+                End
+            End
+            Else If (strVal1.iXPValueType=XP_Date) Begin
+                Move (Date(Integer(strVal1.sValue)+Integer(strVal2.sValue))) to strRval.sValue
+                Move XP_Date to strRval.iXPValueType
+            End
+            Else If (strVal1.iXPValueType=XP_String) Begin
+                Move (strVal1.sValue-strVal2.sValue) to strRval.sValue
+                Move XP_String to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to '-' (minus)"
+            End
+            Function_Return strRval
+        End_Function
+
+
+        Function _fMin tXPValue[] aParameters Returns tXPValue
+        End_Function
+        
+        Function _fMax tXPValue[] aParameters Returns tXPValue
+        End_Function
+        
+        Register_Function _DyadicBooleanOperation tXPValue[] aParameters Integer hFunc Returns tXPValue
+
+        Function _fGT tXPValue[] aParameters Returns tXPValue
+            Function_Return (_DyadicBooleanOperation(Self,aParameters,GT))
+        End_Function
+        Function _fLT tXPValue[] aParameters Returns tXPValue
+            Function_Return (_DyadicBooleanOperation(Self,aParameters,LT))
+        End_Function
+        Function _fGE tXPValue[] aParameters Returns tXPValue
+            Function_Return (_DyadicBooleanOperation(Self,aParameters,GE))
+        End_Function
+        Function _fLE tXPValue[] aParameters Returns tXPValue
+            Function_Return (_DyadicBooleanOperation(Self,aParameters,LE))
+        End_Function
+        Function _fNE tXPValue[] aParameters Returns tXPValue
+            Function_Return (_DyadicBooleanOperation(Self,aParameters,NE))
+        End_Function
+        Function _fEQ tXPValue[] aParameters Returns tXPValue
+            Function_Return (_DyadicBooleanOperation(Self,aParameters,EQ))
+        End_Function
+
+// String functions
+
+        Function _fMid tXPValue[] aPar Returns tXPValue // 3 param
+            tXPValue stValue
+            Move (Mid(aPar[0].sValue, aPar[1].sValue, aPar[2].sValue)) to stValue.sValue
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fLeft tXPValue[] aPar Returns tXPValue // 2 param
+            tXPValue stValue
+            Move (Left(aPar[0].sValue, aPar[1].sValue)) to stValue.sValue
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fRight tXPValue[] aPar Returns tXPValue // 2 param
+            tXPValue stValue
+            Move (Right(aPar[0].sValue, aPar[1].sValue)) to stValue.sValue
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fUppercase tXPValue[] aPar Returns tXPValue // 1 param
+            tXPValue stValue
+            Move (Uppercase(aPar[0].sValue)) to stValue.sValue
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fLowercase tXPValue[] aPar Returns tXPValue // 1 param
+            tXPValue stValue
+            Move (Lowercase(aPar[0].sValue)) to stValue.sValue
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fLength tXPValue[] aPar Returns tXPValue // 1 param
+            tXPValue stValue
+            Move (Length(aPar[0].sValue)) to stValue.sValue
+            Move XP_Integer to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fTrim tXPValue[] aPar Returns tXPValue // 1 param
+            tXPValue stValue
+            Move (Trim(aPar[0].sValue)) to stValue.sValue
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fPos tXPValue[] aPar Returns tXPValue // 2 param
+            tXPValue stValue
+            Move (pos(aPar[0].sValue, aPar[1].sValue)) to stValue.sValue
+            Move XP_Integer to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+        Function _fIf tXPValue[] aPar Returns tXPValue // 3 param
+            Integer iCondition
+            tXPValue stValue
+            Move aPar[0].sValue to iCondition
+            If (iCondition<>0) Begin
+                Move aPar[1] to stValue
+            End
+            Else Begin
+                Move aPar[2] to stValue
+            End
+            Move XP_String to stValue.iXPValueType
+            Function_Return stValue
+        End_Function
+
+            Function _WinningType Integer iTypeLeft Integer iTypeRight Returns Integer
+                If (iTypeLeft=XP_String or iTypeRight=XP_String) ;
+                        Function_Return XP_String
+                If (iTypeLeft=XP_Numeric or iTypeRight=XP_Numeric) ;
+                        Function_Return XP_Numeric
+                If (iTypeLeft=XP_Integer or iTypeRight=XP_Integer) ;
+                        Function_Return XP_Integer
+                Function_Return iTypeLeft // ???
+            End_Function
+        
+            Function _DyadicBooleanOperation tXPValue[] aParams Integer iComp Returns tXPValue
+                tXPValue strRval strParam1 strParam2
+                Integer iType
+                String sLeft sRight
+                Number nLeft nRight
+
+                Move aParams[0] to strParam1
+                Move aParams[1] to strParam2
+                If (strParam1.iXPValueType<>strParam2.iXPValueType) Begin // Cast them alike:
+                    Get _WinningType strParam1.iXPValueType strParam2.iXPValueType to iType
+                    Get _CastValueAs strParam1 iType to strParam1
+                    Get _CastValueAs strParam2 iType to strParam2
+                End
+
+                If (strParam1.iXPValueType=XP_String) Begin
+                    Move strParam1.sValue to sLeft
+                    Move strParam2.sValue to sRight
+                    If (iComp=EQ) Begin
+                        Move (sLeft=sRight) to strRval.sValue
+                    End
+                    Else If (iComp=NE) Begin
+                        Move (sLeft<>sRight) to strRval.sValue
+                    End
+                    Else If (iComp=GT) Begin
+                        Move (sLeft>sRight) to strRval.sValue
+                    End
+                    Else If (iComp=LT) Begin
+                        Move (sLeft<sRight) to strRval.sValue
+                    End
+                    Else If (iComp=GE) Begin
+                        Move (sLeft>=sRight) to strRval.sValue
+                    End
+                    Else If (iComp=LE) Begin
+                        Move (sLeft<=sRight) to strRval.sValue
+                    End
+                End
+                Else Begin
+                    Get StringToNumber of oStringFunctions strParam1.sValue to nLeft
+                    Get StringToNumber of oStringFunctions strParam2.sValue to nRight
+                    If (iComp=EQ) Begin
+                        Move (nLeft=nRight) to strRval.sValue
+                    End
+                    Else If (iComp=NE) Begin
+                        Move (nLeft<>nRight) to strRval.sValue
+                    End
+                    Else If (iComp=GT) Begin
+                        Move (nLeft>nRight) to strRval.sValue
+                    End
+                    Else If (iComp=LT) Begin
+                        Move (nLeft<nRight) to strRval.sValue
+                    End
+                    Else If (iComp=GE) Begin
+                        Move (nLeft>=nRight) to strRval.sValue
+                    End
+                    Else If (iComp=LE) Begin
+                        Move (nLeft<=nRight) to strRval.sValue
+                    End
+                End
+                
+                Move XP_Boolean to strRval.iXPValueType
+                Function_Return strRval
+            End_Function
+
+    Function _fAnd tXPValue[] aParameters Returns tXPValue
+        tXPValue strRval strParameter1 strParameter2
+        Number nVal1 nVal2
+        Move aParameters[0] to strParameter1
+        Move aParameters[1] to strParameter2
+        If ((strParameter1.iXPValueType=XP_Integer or strParameter1.iXPValueType=XP_Numeric) and (strParameter2.iXPValueType=XP_Integer or strParameter2.iXPValueType=XP_Numeric)) Begin
+            Move XP_Boolean to strRval.iXPValueType
+            Move strParameter1.sValue to nVal1
+            Move strParameter2.sValue to nVal2
+            Move (nVal1<>0 and nVal2<>0) to strRval.sValue
+        End
+        Else Begin
+            Move XP_Error to strRval.iXPValueType
+            Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'and'"
+        End
+        Function_Return strRval
+    End_Function
+
+    Function _fOr tXPValue[] aParameters Returns tXPValue
+        Integer iType1 iType2
+        tXPValue strRval strParameter1 strParameter2
+        Number nVal1 nVal2
+        Move aParameters[0] to strParameter1
+        Move aParameters[1] to strParameter2
+        Move strParameter1.iXPValueType to iType1
+        Move strParameter2.iXPValueType to iType2
+        If ((iType1=XP_Integer or iType1=XP_Numeric or iType1=XP_Boolean) and (iType2=XP_Integer or iType2=XP_Numeric or iType2=XP_Boolean)) Begin
+            Move XP_Boolean to strRval.iXPValueType
+            Move strParameter1.sValue to nVal1
+            Move strParameter2.sValue to nVal2
+            Move (nVal1<>0 or nVal2<>0) to strRval.sValue
+        End
+        Else Begin
+            Move XP_Error to strRval.iXPValueType
+            Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'or'"
+        End
+        Function_Return strRval
+    End_Function
+    
+        Function _fNot tXPValue[] aParameters Returns tXPValue // 1 param
+            Number nValue
+            tXPValue strParam strRval
+            Move aParameters[0] to strParam
+            If (strParam.iXPValueType=XP_Integer or strParam.iXPValueType=XP_Numeric or strParam.iXPValueType=XP_Boolean) Begin
+                Move strParam.sValue to nValue
+                Move (nValue=0) to strRval.sValue
+                Move XP_Boolean to strRval.iXPValueType
+            End
+            Else Begin
+                Move XP_Error to strRval.iXPValueType
+                Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'not'"
+            End
+            Function_Return strRval
+        End_Function
+
+    Function _fSin tXPValue[] aParameters Returns tXPValue
+        tXPValue strRval strParameter
+        Move aParameters[0] to strParameter
+        If (strParameter.iXPValueType=XP_Integer or strParameter.iXPValueType=XP_Numeric) Begin
+            Move XP_Numeric to strRval.iXPValueType
+            Move (Sin(strParameter.sValue)) to strRval.sValue
+        End
+        Else Begin
+            Move XP_Error to strRval.iXPValueType
+            Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'sin'"
+        End
+        Function_Return strRval
+    End_Function
+
+    Function _fCos tXPValue[] aParameters Returns tXPValue
+        tXPValue strRval strParameter
+        Move aParameters[0] to strParameter
+        If (strParameter.iXPValueType=XP_Integer or strParameter.iXPValueType=XP_Numeric) Begin
+            Move XP_Numeric to strRval.iXPValueType
+            Move (Cos(strParameter.sValue)) to strRval.sValue
+        End
+        Else Begin
+            Move XP_Error to strRval.iXPValueType
+            Error DFERR_OPERATOR "ExprParser: Illegal parameter passed to 'cos'"
+        End
+        Function_Return strRval
+    End_Function
+
+    Procedure OnDefineOperators tXPGrammar ByRef stGrammar
+// By insiration from: http://en.cppreference.com/w/cpp/language/operator_precedence
+
+        Forward Send OnDefineOperators (&stGrammar)
+        // Priority 1
+        Send DefineOperator (&stGrammar) "^"    2 1 1 (RefFunc(_fExponential))
+        // Priority 2
+        Send DefineOperator (&stGrammar) "-"    1 2 0 (RefFunc(_fUnaryMinus))
+        Send DefineOperator (&stGrammar) "+"    1 2 0 (RefFunc(_fUnaryPlus))
+        // Priority 3
+        Send DefineOperator (&stGrammar) "*"    2 3 0 (RefFunc(_fMultiply))
+        Send DefineOperator (&stGrammar) "/"    2 3 0 (RefFunc(_fDivide))
+        Send DefineOperator (&stGrammar) "%"    2 3 0 (RefFunc(_fRemainder))
+        // Priority 4
+        Send DefineOperator (&stGrammar) "+"    2 4 0 (RefFunc(_fPlus))
+        Send DefineOperator (&stGrammar) "-"    2 4 0 (RefFunc(_fMinus))
+        // Priority 6
+        Send DefineOperator (&stGrammar) ">"    2 6 0 (RefFunc(_fGT))
+        Send DefineOperator (&stGrammar) "<"    2 6 0 (RefFunc(_fLT))
+        Send DefineOperator (&stGrammar) ">="   2 6 0 (RefFunc(_fGE))
+        Send DefineOperator (&stGrammar) "<="   2 6 0 (RefFunc(_fLE))
+        // Priority 7
+        Send DefineOperator (&stGrammar) "<>"   2 7 0 (RefFunc(_fNE))
+        Send DefineOperator (&stGrammar) "="    2 7 0 (RefFunc(_fEQ))
+        // Priority 9
+        Send DefineOperator (&stGrammar) "and"  2 9 0 (RefFunc(_fAnd))
+        Send DefineOperator (&stGrammar) "or"   2 9 0 (RefFunc(_fOr))
+        // Priority ? (I have no idea):
+        Send DefineOperator (&stGrammar) "not"  1 0 0 (RefFunc(_fNot))
+        Send DefineOperator (&stGrammar) "min"  2 0 0 (RefFunc(_fMin))
+        Send DefineOperator (&stGrammar) "max"  2 0 0 (RefFunc(_fMax))
+        // Priority nil (they just have to be here)
+        Send DefineOperator (&stGrammar) "("   -1 0 0 0
+        Send DefineOperator (&stGrammar) ")"   -1 0 0 0
+        Send DefineOperator (&stGrammar) ","   -1 0 0 0
+//        Send DefineOperator (&stGrammar) "string" 1
+//        Send DefineOperator (&stGrammar) "number" 1
+//        Send DefineOperator (&stGrammar) "integer" 1
+//        Send DefineOperator (&stGrammar) "date" 1
+//        Send DefineOperator (&stGrammar) "boolean" 1
+    End_Procedure
+
+    Procedure OnDefineFunctions tXPGrammar ByRef stGrammar
+        Forward Send OnDefineFunctions (&stGrammar)
+        Send DefineFunction (&stGrammar) "Round"     1 XP_Numeric (RefFunc(_fRound))
+        Send DefineFunction (&stGrammar) "Today"     0 XP_Date    (RefFunc(_fToday))
+        Send DefineFunction (&stGrammar) "Month"     1 XP_Integer (RefFunc(_fMonth))
+        Send DefineFunction (&stGrammar) "Week"      1 XP_Integer (RefFunc(_fWeek))
+        Send DefineFunction (&stGrammar) "Year"      1 XP_Integer (RefFunc(_fYear))
+        Send DefineFunction (&stGrammar) "Day"       1 XP_Integer (RefFunc(_fDay))
+        Send DefineFunction (&stGrammar) "DayName"   1 XP_String  (RefFunc(_fDayName))
+        Send DefineFunction (&stGrammar) "MonthName" 1 XP_String  (RefFunc(_fMonthName))
+        Send DefineFunction (&stGrammar) "Sin"       1 XP_Numeric (RefFunc(_fSin))
+        Send DefineFunction (&stGrammar) "Cos"       1 XP_Numeric (RefFunc(_fCos))
+        Send DefineFunction (&stGrammar) "Mid"       3 XP_String  (RefFunc(_fMid))
+        Send DefineFunction (&stGrammar) "Left"      2 XP_String  (RefFunc(_fLeft))
+        Send DefineFunction (&stGrammar) "Right"     2 XP_String  (RefFunc(_fRight))
+        Send DefineFunction (&stGrammar) "Uppercase" 1 XP_String  (RefFunc(_fUppercase))
+        Send DefineFunction (&stGrammar) "Lowercase" 1 XP_String  (RefFunc(_fLowercase))
+        Send DefineFunction (&stGrammar) "Length"    1 XP_Integer (RefFunc(_fLength))
+        Send DefineFunction (&stGrammar) "Trim"      1 XP_String  (RefFunc(_fTrim))
+        Send DefineFunction (&stGrammar) "Pos"       2 XP_Integer (RefFunc(_fPos))
+        Send DefineFunction (&stGrammar) "If"        3 XP_String  (RefFunc(_fIf))
+    End_Procedure
+
+    Procedure OnDefineConstants tXPGrammar ByRef stGrammar
+        Forward Send OnDefineConstants (&stGrammar)
+        Send DefineConstant (&stGrammar) "pi" 3.1415926 XP_Numeric
+    End_Procedure
+
+End_Class

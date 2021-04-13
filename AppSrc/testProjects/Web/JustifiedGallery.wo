@@ -1,0 +1,71 @@
+Use cWebView.pkg
+Use cWebPanel.pkg
+Use cWebForm.pkg 
+
+Use Web\cWebHtmlBoxSture.pkg
+Use FileFunctions.pkg
+
+// Thing to automatically generate the flickr nomenclature thumbnails:
+// https://github.com/dannen/justified_resize
+
+
+
+Object oJustifiedGallery is a cWebView
+    Set psCaption to "Justified Gallery - cWebHtmlBox subclass"
+
+    // Your DDO structure will go here
+
+    Object oWebMainPanel is a cWebPanel
+        Set piColumnCount to 12
+        Object oJustifiedGalleryHtmlBox is a cWebHtmlBoxSture
+            Set pbFillHeight to True
+            Set piColumnSpan to 0
+            Set pbShowBorder to True
+            Set pbServerOnClick to True
+//            Set psBackgroundColor to "black"
+            
+//            Procedure OnOrdinaryClick String sAction String sParam
+//            End_Procedure
+            
+            Procedure OnBuildHtml
+                Integer iMax iItem
+                String sFolder sImageFile
+                tFileData[] aFileData
+                
+                Get VdfFolderPath of oFileFunctions VDF_APPHTML to sFolder
+                Get AppendPath of oFileFunctions sFolder "JustifiedGallerySample" to sFolder
+                Send ReadFolder of oFileFunctions sFolder "*.jpg" (&aFileData) 1
+                Move (SizeOfArray(aFileData)-1) to iMax
+                
+                Send AddOpenElement "div"
+                    Send AddAttribute "id" "mygallery"
+                    For iItem from 0 to iMax
+                        Move ("JustifiedGallerySample/"+aFileData[iItem].sFileName) to sImageFile
+                        Send AddOpenElement "a"
+//                            Send AddAttribute "href" sImageFile
+                            Send AddOnClickAttributes "ThumbnailAction" sImageFile
+                            Send AddElement "img" ""
+                                Send AddAttribute "alt" ("Billed "+String(iItem+1))
+                                Send AddAttribute "src" sImageFile
+                        Send CloseElement // a
+                    Loop
+                Send CloseElement // div 
+            End_Procedure
+        End_Object
+
+        Object oInitialiseBtn is a cWebButton
+            Set piColumnSpan to 0
+            Set psCaption to "Init"
+            Procedure OnClick
+                Send initializeJustifiedGallery of oJustifiedGalleryHtmlBox "mygallery"
+            End_Procedure
+        End_Object
+    End_Object 
+
+
+    Procedure OnLoad
+        Forward Send OnLoad
+        Send RefreshContent of oJustifiedGalleryHtmlBox
+    End_Procedure //
+        
+End_Object

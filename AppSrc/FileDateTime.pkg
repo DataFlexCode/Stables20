@@ -1,0 +1,122 @@
+﻿Use tWinStructs.pkg
+Use Winkern.pkg
+Use cWorkspace.pkg
+
+// This function formats the time in a picture-string passed
+//
+// Picture  Meaning
+//
+//    h     Hours with no leading zero for single-digit hours; 12-hour clock
+//    hh    Hours with leading zero for single-digit hours; 12-hour clock
+//    H     Hours with no leading zero for single-digit hours; 24-hour clock
+//    HH    Hours with leading zero for single-digit hours; 24-hour clock
+//    m     Minutes with no leading zero for single-digit minutes
+//    mm    Minutes with leading zero for single-digit minutes
+//    s     Seconds with no leading zero for single-digit seconds
+//    ss    Seconds with leading zero for single-digit seconds
+//    t     One character time marker string, such as A or P
+//    tt    Multicharacter time marker string, such as AM or PM
+//
+// For example, to get the time string
+//    "11:29:40 PM"
+// use the following picture string:
+//    "hh':'mm':'ss tt"
+External_Function GetTimeFormat "GetTimeFormatW" Kernel32.Dll ;
+    DWord LCID DWord dwFlags Pointer lpsSystemTime Pointer lpFormat Address lpTimeStr Integer cchTime Returns Integer
+
+// This function formats the date in a picture-string passed
+//
+// Picture  Meaning
+//
+//    d     Day of month as digits with no leading zero for single-digit days.
+//    dd    Day of month as digits with leading zero for single-digit days.
+//    ddd   Day of week as a three-letter abbreviation. The function uses the LOCALE_SABBREVDAYNAME value
+//          associated with the specified locale.
+//    dddd  Day of week as its full name. The function uses the LOCALE_SDAYNAME value associated with the
+//          specified locale.
+//    M     Month as digits with no leading zero for single-digit months.
+//    MM    Month as digits with leading zero for single-digit months.
+//    MMM   Month as a three-letter abbreviation. The function uses the LOCALE_SABBREVMONTHNAME value
+//          associated with the specified locale.
+//    MMMM  Month as its full name. The function uses the LOCALE_SMONTHNAME value associated with the
+//          specified locale.
+//    y     Year as last two digits, but with no leading zero for years less than 10.
+//    yy    Year as last two digits, but with leading zero for years less than 10.
+//    yyyy  Year represented by full four digits.
+//    gg    Period/era string. The function uses the CAL_SERASTRING value associated with the specified
+//          locale. This element is ignored if the date to be formatted does not have an associated era
+//          or period string.
+// For example, to get the date string
+//    "Wed, Aug 31 94"
+// use the following picture string:
+//    "ddd',' MMM dd yy"
+External_Function GetDateFormat "GetDateFormatW" Kernel32.Dll ;
+    DWord LCID DWord dwFlags Pointer lpsSystemTime Pointer lpFormat Pointer lpDateStr Integer cchDate Returns Integer
+
+Struct tFileDateTime
+    String sFileName
+    DateTime dtCreated
+    DateTime dtLastAccessed
+    DateTime dtLastWrite
+    UInteger iAttributes
+End_Struct
+
+// lpFileTime     :pointer to file time to convert
+// lpSystemTime   :pointer to structure to receive system time
+External_Function FileTimeToSystemTime "FileTimeToSystemTime" Kernel32.Dll ;
+    Pointer lpFileTime Pointer lpSystemTime Returns Integer
+
+Function ConvertDateTimeToSystemDateTime Global UInteger dwLowDateTime UInteger dwHighDateTime Returns DateTime
+    WString sFormattedTime sFormattedDate
+    Integer iSuccess iDataLength
+    tWinSystemTime SystemTime
+    tWinFileTime FileTime
+    DateTime dtResult
+
+    Move dwLowDateTime to FileTime.dwLowDateTime
+    Move dwHighDateTime to FileTime.dwHighDateTime
+
+    Move (FileTimeToSystemTime (AddressOf (FileTime), AddressOf (SystemTime))) to iSuccess
+    If (iSuccess <> 0) Begin
+        Move (Repeat (Character (0), 255)) to sFormattedTime
+        Move (GetTimeFormat (Locale_User_Default, 0, AddressOf (SystemTime), 0, AddressOf (sFormattedTime), 255)) to iDataLength
+
+        Move (Repeat (Character (0), 255)) to sFormattedDate
+        Move (GetDateFormat (Locale_User_Default, 0, AddressOf (SystemTime), 0, AddressOf (sFormattedDate), 255)) to iDataLength
+
+        Move (Cstring (sFormattedDate) * Cstring (sFormattedTime)) to dtResult
+    End
+
+    Function_Return dtResult
+End_Function
+
+Function FileDateTime Global WString sFilePath Returns tFileDateTime[]
+    Handle hFileFind
+    Integer iVoid iRetval iFile
+    DateTime dtFileTime
+    tWin32FindDataW Win32FindData
+    tFileDateTime[] FileDateTime
+    
+//    Move (sFilePath+Character(0)+Character(0)) to sFilePath
+    
+    Move (winFindFirstFileW(sFilePath, AddressOf(Win32FindData))) to hFileFind
+    If (hFileFind <> INVALID_HANDLE_VALUE) Begin
+        Repeat
+            Move (PointerToWString(AddressOf (Win32FindData) + SizeOfType (tWin32FindData) - MAX_PATH - MAX_ALTPATH)) to FileDateTime[iFile].sFileName
+            Move Win32FindData.dwFileAttributes to FileDateTime[iFile].iAttributes
+            Move (ConvertDateTimeToSystemDateTime (Win32FindData.ftCreationTime.dwLowDateTime, Win32FindData.ftCreationTime.dwHighDateTime)) to FileDateTime[iFile].dtLastWrite
+            Move (ConvertDateTimeToSystemDateTime (Win32FindData.ftLastAccessTime.dwLowDateTime, Win32FindData.ftLastAccessTime.dwHighDateTime)) to FileDateTime[iFile].dtLastAccessed
+            Move (ConvertDateTimeToSystemDateTime (Win32FindData.ftLastWriteTime.dwLowDateTime, Win32FindData.ftLastWriteTime.dwHighDateTime)) to FileDateTime[iFile].dtLastWrite
+
+            Increment iFile
+
+            Move (winFindNextFileW(hFileFind, AddressOf (Win32FindData))) to iRetval
+            // If iRetval = false the function call fails but GetLastError fails to tell me if
+            // this was because we do not find any files anymore.
+        Until (not (iRetval))
+
+        Move (winFindClose (hFileFind)) to iVoid
+    End
+
+    Function_Return FileDateTime
+End_Function

@@ -1,0 +1,134 @@
+Use cWebView.pkg
+Use cWebPanel.pkg
+Use cWebForm.pkg 
+Use cWebHtmlBox.pkg
+Use cWebIFrame.pkg
+
+Use Web\cWebHtmlBoxSture.pkg
+
+Object oGoogleFontTest is a cWebView
+    
+//    Set piWidth to 700
+    Set psCaption to "Google Fonts - cWebHtmlBox minitest"
+    
+
+    // Your DDO structure will go here
+
+    Object oWebMainPanel is a cWebPanel
+        Set piColumnCount to 10
+                                                                                  
+                                                                                  
+                                                                                  
+        // place controls here.
+        // Your view will grow as controls are added
+        
+        Object oWebHtmlBox is a cWebHtmlBoxSture
+            Set piColumnSpan to 0
+            Set psHtml to "HTML Box"
+            Set pbFillHeight to True
+            
+            Procedure BuildFontTest3 String sFontFamily String sFontSize String sFontWeight
+                String sStyle
+                tCSSPropertyValue[] aCSSPropertyValues
+
+                Send AddElement "div" ("font-family: "+sFontFamily+", sz: "+sFontSize+", weight: "+sFontWeight)
+                
+                Send SetPropertyValue of oCSSFunctions (&aCSSPropertyValues) CSSP_font_family sFontFamily
+                Send SetPropertyValue of oCSSFunctions (&aCSSPropertyValues) CSSP_font_size sFontSize
+                Send SetPropertyValue of oCSSFunctions (&aCSSPropertyValues) CSSP_font_weight sFontWeight
+                
+                Send AddOpenElement "p" 
+                    Send AddAttribute "style" (CSSStyleAttributeValue(oCSSFunctions,aCSSPropertyValues))
+                    Send AddElement "span" "Grumpy "
+                    Send AddElement "b" "wizards " 
+                    Send AddElement "i" "make toxic "
+                    Send AddElement "span" "brew for the "
+                    Send AddOpenElement "i"
+                        Send AddOpenElement "b"
+                        Send AddElement "span" "evil Queen and Jack."
+                        Send CloseElement // b
+                    Send CloseElement // i
+                Send CloseElement // p
+
+                Send AddOpenElement "div" 
+                    Send AddAttribute "style" (CSSStyleAttributeValue(oCSSFunctions,aCSSPropertyValues))
+                    Send AddElement "span" "KONSULENTYDELSER"
+                    Send AddAttribute "style" "padding:10px"
+                    Send AddElement "span" "KOMPETENCEUDVIKLING"
+                    Send AddAttribute "style" "padding:10px"
+                    Send AddElement "span" "VIDEN"
+                    Send AddAttribute "style" "padding:10px"
+                    Send AddElement "span" "UDVIKLINGSLABORATORIER"
+                    Send AddAttribute "style" "padding:10px"
+                    Send AddElement "span" "SEKTORER"
+                    Send AddAttribute "style" "padding:10px"
+                Send CloseElement // p
+                Send AddElement "hr" ""
+//KONSULENTYDELSER
+//KOMPETENCEUDVIKLING
+//VIDEN
+//UDVIKLINGSLABORATORIER
+//SEKTORER 
+            End_Procedure
+            
+            Procedure BuildFontTest2 String sFontFamily String[] aFontSizes String[] aFontWeights 
+                Integer iFontSizeItem iFontSizeMax
+                Integer iFontWeightItem iFontWeightMax
+                Move (SizeOfArray(aFontSizes)-1) to iFontSizeMax
+                Move (SizeOfArray(aFontWeights)-1) to iFontWeightMax
+                For iFontSizeItem from 0 to iFontSizeMax
+                    For iFontWeightItem from 0 to iFontWeightMax 
+                        Send BuildFontTest3 sFontFamily aFontSizes[iFontSizeItem] aFontWeights[iFontWeightItem]
+                    Loop
+                Loop
+            End_Procedure
+            
+            // Send BuildFontTest "'Roboto Condensed', Arial, serif" "8px,10px,12px,16px,24px" "300,400,700"
+            Procedure BuildFontTest String sFontFamily String sFontSizes String sFontWeights 
+                String[] aFontSizes aFontWeights 
+                Send SplitString of oStringFunctions sFontSizes "," True True (&aFontSizes)
+                Send SplitString of oStringFunctions sFontWeights "," True True (&aFontWeights)
+                Send BuildFontTest2 sFontFamily aFontSizes aFontWeights
+            End_Procedure
+            
+            
+            Procedure OnBuildHtml
+                Send BuildFontTest "'Roboto Condensed', Arial, serif" "8px,10px,12px,16px,20px,24px,30px,36px,48px" "300,400,700"
+                
+                
+                
+                // <link href='http://fonts.googleapis.com/css?family=Roboto+Condensed:400,700' rel='stylesheet' type='text/css'>
+//                Send AddElement "link" ""
+//                Send AddAttribute "href" 'http://fonts.googleapis.com/css?family=Roboto+Condensed:400,700'
+//                Send AddAttribute "rel" 'stylesheet'
+//                Send AddAttribute "type" 'text/css'
+//                Send AddElement "style" "p { font-family: 'Roboto Condensed', Arial, serif; font-weight: 400; font-size:36px}"
+//                Send AddElement "style" "p { font-family: 'Droid Serif', Arial, serif; font-weight: 400; font-size:36px}"
+                
+//                 
+                
+//                Send AddElement "p" "Grumpy wizards make toxic brew for the evil Queen and Jack."
+//                Send AddOpenElement "p" 
+//                    Send AddElement "span" "Grumpy wizards make"
+//                    Send AddElement "i" " tofic"
+//                    Send AddElement "b" " brew"
+//                    Send AddElement "span" " for the evil Queen and Jack."
+//                Send CloseElement
+            End_Procedure
+            
+            Procedure OnLoad
+                Forward Send OnLoad
+                Send RefreshContent
+            End_Procedure
+        End_Object
+
+//        Object oWebIFrame is a cWebIFrame
+//            Set piColumnSpan to 0
+//            Set pbFillHeight to True
+//        End_Object
+//        
+        
+        
+    End_Object 
+
+End_Object

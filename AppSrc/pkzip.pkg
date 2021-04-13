@@ -1,0 +1,58 @@
+Class cPkZip is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String _psCurrentZip
+        Property String _ps
+    End_Procedure
+    
+    //> Returns true if pkzip25.exe is present in the "program" folder.
+    Function CanZip Returns Boolean
+        String sPrograms sFile
+        Get VdfFolderPath of oFileFunctions VDF_PROGRAM to sPrograms
+        Get AppendPath of oFileFunctions sPrograms "pkzip25.exe" to sFile
+        Function_Return (FileExists(oFileFunctions,sFile)=1) 
+    End_Function 
+    
+    Function NewZip String sZipFile Boolean bOverwriteExisting Returns Boolean
+        Integer iVal
+        Boolean bOk
+        
+        If (sZipFile="") Begin
+            Function_Return False
+        End
+        If (not(FileExists(oFileFunctions,PathToFolder(oFileFunctions,sZipFile))=2)) Begin
+            Function_Return False // Target zip file folder doesn't exist
+        End
+        
+        Get FileExists of oFileFunctions sZipFile to iVal
+        If (iVal=2) Begin
+            Function_Return False // sZipFile exists and its a folder.
+        End
+        If (iVal=1) Begin // file exists
+            If (bOverwriteExisting) Begin
+                Get DeleteFileNew of oFileFunctions sZipFile False to bOk
+                If (not(bOk)) Begin
+                    Function_Return False
+                End
+            End
+        End
+        Set _psCurrentZip to sZipFile
+        Function_Return True
+    End_Function
+    
+    Procedure SetRoot String sFolder
+    End_Procedure
+    
+    Procedure SetTargetZipFile String sFile
+    End_Procedure
+    
+    Procedure AddToZip String sZipFile String sFileToAdd
+    End_Procedure
+    
+    Procedure CopyDataTo
+    End_Procedure
+    
+    Procedure ZipFolder String sFolder String sZipFile
+    End_Procedure
+
+End_Class

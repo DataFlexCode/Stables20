@@ -1,0 +1,47 @@
+﻿//>
+//>
+//>
+//> Well, it's as simple as this:
+//>
+//> <code>
+//>     Get EncodeString of oBase64Functions sValue to sValue
+//>     Get DecodeString of oBase64Functions sValue to sValue
+//> </code>
+//>
+//> Remember to set the "max argument size" if dealing with very large strings.
+//>
+//> pkg.doc.end
+Use VdfBase.pkg
+
+Global_Variable Integer oBase64Functions
+
+Object _oBase64Functions is a cObject
+    Move Self to oBase64Functions
+
+    Function EncodeString String sValue Returns String
+        Address pBase64
+        String sResult
+        Integer iVoid
+        If (sValue<>"") Begin
+            Move (Base64Encode(AddressOf(sValue), Length(sValue))) to pBase64
+            Move (PointerToString(pBase64)) to sResult
+            Move (Free(pBase64)) to iVoid
+        End
+        Function_Return sResult
+    End_Function
+
+    Function DecodeString String sValue Returns String
+        Address pBinary
+        String sBinary
+        Integer iVoid iLen
+        If (sValue<>"") Begin
+            Move (Base64Decode(AddressOf(sValue), &iLen)) to pBinary
+            Move (Repeat(Character(0), iLen)) to sBinary
+            Move (MemCopy(AddressOf(sBinary), pBinary, iLen)) to iVoid
+            Move (Free(pBinary)) to iVoid
+        End
+        Function_Return sBinary
+    End_Function
+
+End_Object
+

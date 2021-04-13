@@ -1,0 +1,526 @@
+Use FileFunctions.pkg // Define oFileFunctions object
+
+// You want to attach a number of documents for each record in a table, the "document parent table", and you want
+// to save all these documents in a single folder (or possibly in a folder structure).
+//
+// Even if this sounds simple enough, you will probably end up trying to
+// figure out how to avoid conflicting file names and how to copy these
+// documents (files) around your disk system.
+//
+// The cDocumentAttacher class defined in this package helps you get around
+// this problem.
+//
+// First you need to create a table that relates to the 'document parent table'
+// and that will hold one record for each attached document.
+
+// Implementation template:
+//
+// object oMyDocumentAttacher is a cDocumentAttacher
+//
+//   // If you do not set the psHomeDirectory property it will default
+//   // a subdirectory called "attach" found under your data directory.
+//   set psHomeFolder to "k:\documents"
+//
+//   // This function must return the root name of a record (no path
+//   // and *WITHOUT* extension)
+//   function CurrentRecordRootName returns string //
+//     function_return (IntToStrRzf(VmAttach.Udsted_Aar,4)+"-"+IntToStrRzf(VmAttach.Loebe_Nr,4)+"-"+IntToStrRzf(VmAttach.Nr,2))
+//   end_function
+//
+//   function CurrentRecordOriginalFileName returns string
+//     function_return Trex021.original_name
+//   end_function
+//
+//   procedure set CurrentRecordOriginalFileName string lsValue
+//     move lsValue to Trex021.original_name
+//   end_procedure
+//
+// end_object
+//
+// class Trex021_DataDictionary is a DataDictionary
+//   procedure request_save_document string lsExternalFileName
+//     integer lhDoc lbCheckIn lbExists lbSuccess
+//     string lsErrorMsg
+//     move (oMyDocumentAttacher(self)) to lhDoc
+//     // Does the document exist?
+//     if (SEQ_FileExists(lsExternalFileName)=SEQIT_FILE) begin
+//       // If so, make sure we have a record:
+//       set field_changed_Value field Trex021.original_name to Trex021.original_name
+//       send request_save
+//       ifnot (should_save(self)) begin // If it saved OK
+//         get Doc_Exists of lhDoc to lbExists // Do we already have it in the database?
+//         if lbExists get MB_Verify "Document already exists, overwrite?" DFTRUE to lbCheckIn
+//         else move DFTRUE to lbCheckIn
+//         if lbCheckIn begin
+//           get Doc_CheckIn of lhDoc lsExternalFileName to lbSuccess
+//           ifnot lbSuccess begin
+//             move ("Error saving document Source: "+lsExternalFileName+" Internal target: "+CurrentRecordAbsoluteFileName(lhDoc)) to lsErrorMsg
+//             send error 224 lsErrorMsg
+//           end
+//           else begin
+//             set field_changed_Value field Trex021.original_name to (SEQ_RemovePathFromFileName(lsExternalFileName))
+//             send request_save
+//           end
+//         end
+//       end
+//     end
+//     else error 221 "Document not found"
+//   end_procedure
+//
+//   procedure delete_main_file
+//     integer lhDoc liGrb lbSuccess
+//     string lsInternalFileName
+//     if (current_record(self)) begin
+//       move (oMyDocumentAttacher(self)) to lhDoc
+//       if (Doc_Exists(lhDoc)) begin
+//         get Doc_Delete of lhDoc to lbSuccess
+//       end
+//       else move 1 to lbSuccess
+//       ifnot lbSuccess error 223 "Document could not be deleted"
+//     end
+//     forward send delete_main_file
+//   end_procedure
+//
+//   procedure save_main_file
+//     if (Trex021.filename="") move trex021.original_name to Trex021.filename
+//     forward send save_main_file
+//   end_procedure
+// end_class
+//
+// From within a dbGrid:
+//
+//   procedure DoAddFile
+//     string lsFileName
+//     if (should_save(self)) send obs "Changes must be saved before document can be added"
+//     else begin
+//       if (current_record(self)) send add_or_remove_row
+//       ifnot (current_record(self)) begin
+//         get SEQ_SelectFile "Select document to attach" "All files|*.*" to lsFileName
+//         if (lsFileName<>"") ;
+//           send request_save_document to (server(self)) lsFileName
+//         else send add_or_remove_row
+//       end
+//     end
+//   end_procedure
+//
+//   procedure DoLaunchFile
+//     integer lbOK
+//     string lsFileName
+//     if (current_record(server(self))) begin
+//       get Doc_Exists of oMyDocumentAttacher to lbOK
+//       if lbOK begin
+//         send Doc_Execute of oMyDocumentAttacher
+//       end
+//       else error 222 "Document not found"
+//     end
+//   end_procedure
+//
+
+
+//> Class for storing files attached to records.
+Class cDocumentAttacher is a cObject
+    Procedure Construct_Object
+        Forward Send construct_object
+        Property String  psHomeFolder ""
+        Property Integer _pbHomeFolderOK -1 // -1: not checked yet
+        Property String  _psRenFrom ""
+
+        Property Integer piTable
+        Property Integer piUniqueIdColumn
+        Property Integer piFilenameColumn
+        Property Integer piDocumentTypeColumn
+        Property Integer piOrigFilenameColumn
+        Property Integer piCreated23Column
+
+        Property Integer peSubfolderStrategy 0 // 0=no subfolders, 1="<year>-<month>" the record was created
+    End_Procedure
+
+             //> Returns true if the home folder has been
+             Function IsHomeFolderOK Returns Boolean
+                 Integer iHomeFolder
+                 Boolean bCreateOk
+                 String sPath
+                 Get _pbHomeFolderOK to iHomeFolder
+                 If (iHomeFolder=-1) Begin // Not checked yet
+                     Get psHomeFolder to sPath
+                     If (FileExists(oFileFunctions,sPath)=0) Begin
+                         Get CreateFolderNew of oFileFunctions sPath to bCreateOk
+                         If (bCreateOk) begin
+                            Move 1 to iHomeFolder
+                         End
+                         Else begin
+                            Move 0 to iHomeFolder
+                         End
+                     End
+                     Else begin
+                        Move 1 to iHomeFolder // ok
+                     End
+                     Set _pbHomeFolderOK to iHomeFolder
+                 End
+                 Function_Return (iHomeFolder<>0)
+             End_Function
+
+    Procedure SetHomeFolderRelativeToData String sFolder
+        String sFileListPath
+        Get VdfFolderPath of oFileFunctions VDF_FILELIST to sFileListPath
+        Get AppendPath of oFileFunctions sFileListPath sFolder to sFolder
+        Set psHomeFolder to sFolder
+    End_Procedure
+
+    //> If there is any dynamic "addition" to the home directory for the current
+    //> record function CurrentRecordSubDirectory should return the segment to
+    //> be added. Standard return value for this function is "".
+    Function CurrentRecordSubFolder Returns String
+        Integer iSubfolderStrategy
+        Integer iTable iColumn iYear iMonth
+        DateTime dtCreated
+        String sCreated23
+
+        Get peSubfolderStrategy to iSubfolderStrategy
+        If (iSubfolderStrategy=1) Begin // 1="<year>-<month>" the record was created
+            Get piTable to iTable
+            Get piCreated23Column to iColumn
+            Get_Field_Value iTable iColumn to sCreated23
+            Get String23ToDateTime of oDateFunctions sCreated23 to dtCreated
+            Move (DateGetYear(dtCreated)) to iYear
+            Move (DateGetMonth(dtCreated)) to iMonth        
+            // Returns "2015-1" if the record was created in january 2015.
+            Function_Return (String(iYear)+"-"+String(iMonth))
+        End
+        Function_Return ""
+    End_Function
+
+    //> To be filled out at the instantiation level. Should return the 'root
+    //> name' of the file for the current record (without any extension).
+    Function CurrentRecordRootName Returns String
+        Integer iTable iColumn
+        String sUnique
+        Get piTable to iTable
+        Get piUniqueIdColumn to iColumn
+        Get_Field_Value iTable iColumn to sUnique
+        Function_Return ("DOC"+sUnique)
+//        Error DFERR_PROGRAM "Function CurrentRecordRootName must be overridden"
+    End_Function
+
+    //> To be filled out at the instantiation level. Should return the 'root
+    //> name' of the file for the current record.
+    Function CurrentRecordOriginalFileName Returns String
+        Integer iTable iColumn
+        String sOriginalFilename
+        Get piTable to iTable
+        Get piOrigFilenameColumn to iColumn
+        Get_Field_Value iTable iColumn to sOriginalFilename
+        Function_Return sOriginalFilename
+//        Error DFERR_PROGRAM "Function CurrentRecordOriginalFileName must be overridden"
+      // To be filled out
+    End_Function
+
+    Procedure Set CurrentRecordOriginalFileName String sValue
+        Integer iTable iColumn
+        Get piTable to iTable
+        Get piOrigFilenameColumn to iColumn
+        Set_Field_Value iTable iColumn to sValue
+//        Error DFERR_PROGRAM "Procedure Set CurrentRecordOriginalFileName must be overridden"
+      // To be filled out
+    End_Procedure
+
+             // Returns the extension of the original filename
+             Function CurrentRecordOriginalExtension Returns String
+                 String sFile sType
+                 Get CurrentRecordOriginalFileName to sFile
+                 Get PathToType of oFileFunctions (trim(sFile)) to sType
+                 Function_Return sType
+             End_Function
+
+    // This function returns the full path and filename of
+    // the attached file as named by this system.
+    Function CurrentRecordAbsoluteFileName Returns String
+        Boolean bCreateOk
+        String sDir sSubdir sFile sRval sExt sCheckPath
+        If (IsHomeFolderOK(Self)) Begin
+            Get psHomeFolder to sDir
+
+            Get CurrentRecordSubFolder to sSubdir
+            If (sSubdir<>"") Begin
+                Get AppendPath of oFileFunctions sDir sSubdir to sCheckPath
+                If (FileExists(oFileFunctions,sCheckPath)=0) Begin
+                    // Doesn't exist, let's create it:
+                    Get CreateFolderNew of oFileFunctions sCheckPath to bCreateOk
+                    If (not(bCreateOk)) ;
+                            Function_Return ""
+                End
+            End
+
+            Get CurrentRecordRootName to sFile
+            If (sFile="") ;
+                    Function_Return "" // Supposedly an error condition!
+            If (sSubdir<>"") Begin
+                Get AppendPath of oFileFunctions sDir sSubdir to sRval
+                Get AppendPath of oFileFunctions sRval sFile to sRval
+            End
+            Else begin
+                Get AppendPath of oFileFunctions sDir sFile to sRval
+            End
+            Get CurrentRecordOriginalExtension to sExt
+            If (sExt<>"") ;
+                    Move (sRval+"."+sExt) to sRval
+        End
+        Else Move "" to sRval
+        Function_Return sRval
+    End_Function
+
+    Function Doc_Exists Returns Boolean
+        String sFileName
+        If (IsHomeFolderOK(Self)) Begin
+            Get CurrentRecordAbsoluteFileName to sFileName
+            Function_Return (FileExists(oFileFunctions,sFileName)=1) // 1:file
+        End
+        Function_Return False
+    End_Function
+    
+    Function Doc_IsReadOnly Returns Boolean
+        Integer bOK iRet
+        String sFileName
+        Get Doc_Exists to bOK
+        If (bOK) Begin
+            Get CurrentRecordAbsoluteFileName to sFileName
+            Move (GetAttribute(oFileFunctions,sFileName,C_FILE_ATTRIBUTE_READONLY)) to iRet
+        End
+        Else Begin
+            Move 0 to iRet
+        End
+        Function_Return (iRet<>0)
+    End_Function
+    
+    Procedure SetReadOnly Boolean bState
+        Integer bOK iRet
+        String sFileName
+        Get Doc_Exists to bOK
+        If (bOK) Begin
+            Get CurrentRecordAbsoluteFileName to sFileName
+            If (bState) Begin
+                Get SetAttribute of oFileFunctions sFileName C_FILE_ATTRIBUTE_READONLY to iRet
+            End
+            Else Begin
+                Get RemoveAttribute of oFileFunctions sFileName C_FILE_ATTRIBUTE_READONLY to iRet
+            End
+        End
+    End_Procedure
+
+    Function Doc_CheckIn String sExtFileName Returns Boolean
+        Boolean bSuccess
+        String sRoot sOrigName sIntFileName
+        If (IsHomeFolderOK(Self)) Begin
+            // Remove the path from the incoming file name:
+            Get PathToFileName of oFileFunctions sExtFileName to sOrigName
+
+            // Have the class descendant store the name in the record buffer:
+            Set CurrentRecordOriginalFileName to sOrigName
+            // Now, let's have the inseide file name:
+            Get CurrentRecordAbsoluteFileName to sIntFileName
+            // And now copy it:
+            Get CopyFileNew of oFileFunctions sExtFileName sIntFileName to bSuccess
+        End
+        Else begin
+            Move False to bSuccess
+        End
+        Function_Return bSuccess //
+    End_Function
+
+    Function Doc_CopyOut String sExtFileName Returns Boolean
+        Boolean bSuccess
+        String sIntFileName
+        If (IsHomeFolderOK(Self)) Begin
+            Get CurrentRecordAbsoluteFileName to sIntFileName
+            Get CopyFileNew of oFileFunctions sIntFileName sExtFileName to bSuccess
+        End
+        Else begin
+            Move False to bSuccess
+        End
+        Function_Return bSuccess
+    End_Function
+
+#IFNDEF IS$WEBAPP
+    Procedure Doc_Execute
+        String sIntFileName
+        If (IsHomeFolderOK(Self)) Begin
+            Get CurrentRecordAbsoluteFileName to sIntFileName
+            If (FileExists(oFileFunctions,sIntFileName)=1) Begin
+                Send ShellExecuteDocument of oFileFunctions sIntFileName
+            End
+        End
+    End_Procedure
+#ENDIF
+
+    // Delete document of the current record from the file system
+    Function Doc_Delete Returns Boolean
+        Boolean bSuccess
+        String sIntFileName
+        If (IsHomeFolderOK(Self)) Begin
+            Get CurrentRecordAbsoluteFileName to sIntFileName
+            Get DeleteFileNew of oFileFunctions sIntFileName to bSuccess
+        End
+        Else begin
+            Move False to bSuccess
+        End
+        Function_Return bSuccess
+    End_Function
+
+    //> The Doc_Rename procedure works like this:
+    //>
+    //>  1. Find record
+    //>  2. Doc_Rename_Setup_From // Setup source path
+    //>  3. Rename the record and save
+    //>  4. Call Doc_Rename
+
+    Procedure Doc_Rename_Setup_From
+        String sFrom
+        Get CurrentRecordAbsoluteFileName to sFrom
+        Set _psRenFrom to sFrom
+    End_Procedure
+
+    Procedure Doc_Rename
+        Boolean bOk
+        String sFrom sTo
+        Get _psRenFrom to sFrom
+        Get CurrentRecordAbsoluteFileName to sTo
+        If (FileExists(oFileFunctions,sFrom)=1) Begin
+            // We only attempt this if the source document exists
+            Get MoveFileNew of oFileFunctions sFrom sTo to bOk
+            If (not(bOk)) begin
+                Error 225 "Document could not be renamed!"
+            End
+        End
+    End_Procedure
+
+    Procedure End_Construct_Object // Assign a standard value to psHomeFolder
+        String sFileListPath
+        Forward Send end_construct_object
+        If (psHomeFolder(Self)="") Begin
+            Send setHomeFolderRelativeToData to "Attach"
+        End
+    End_Procedure
+End_Class // cDocumentAttacher
+
+
+
+Use Datadict.pkg
+Use Win\ConfirmationFunctions.pkg
+
+//> For mixing into DataDictionary classes
+Class cDocumentAttacherMx is a Mixin 
+    Procedure Define_cDocumentAttacherMx
+        Property Integer phDocumentAttacher
+    End_Procedure
+    
+    Procedure Request_Save_Document String sExternalFileName
+        Integer hDocAttacher bCheckIn bExists bSuccess
+        Integer iTable iOrigFilenameColumn iDocumentTypeColumn
+        String sOriginalFilename sInfo
+        
+        Get phDocumentAttacher to hDocAttacher
+        Get piOrigFilenameColumn of hDocAttacher to iOrigFilenameColumn
+        Get piDocumentTypeColumn of hDocAttacher to iDocumentTypeColumn
+
+        If (FileExists(oFileFunctions,sExternalFileName)=1) Begin // If it's a file
+            Get piTable of hDocAttacher to iTable
+            Get_Field_Value iTable iOrigFilenameColumn to sOriginalFilename
+            Set Field_Changed_Value iOrigFilenameColumn to sOriginalFilename // Tving gemning
+            Send Request_Save 
+
+            If (not(Should_Save(Self))) Begin
+                Get Doc_Exists of hDocAttacher to bExists
+                If (bExists) Begin
+                    Get YesNo of oConfirmationFunctions "Dokumentet findes allerede, overskriv?" True to bCheckIn
+                End
+                Else Begin
+                    Move True to bCheckIn
+                End
+                
+                If (bCheckIn) Begin
+                    Get Doc_CheckIn of hDocAttacher sExternalFileName to bSuccess
+                    If (not(bSuccess)) Begin
+                        Move ("Kilde:"+Character(10)+sExternalFileName+Character(10)+"Internt m†l:"+Character(10)+CurrentRecordAbsoluteFileName(hDocAttacher)) to sInfo
+                        Send Info_Box sInfo "Fejl under gemning af dokument"
+                    End
+                    Set Field_Changed_Value iOrigFilenameColumn to (PathToFileName(oFileFunctions,sExternalFileName))
+                    Set Field_Changed_Value iDocumentTypeColumn to (PathToType(oFileFunctions,sExternalFileName))
+                    Send Request_Save
+                End
+            End
+
+        End
+        Else Begin
+            Error DFERR_PROGRAM "Dokument ikke fundet"
+        End
+    End_Procedure
+
+    Procedure Save_Main_File
+        Integer hDocAttacher 
+        Integer iTable iOrigFilenameColumn iFilenameColumn 
+        String sValue
+        
+        Get phDocumentAttacher to hDocAttacher
+        Get piTable of hDocAttacher to iTable
+        Get piOrigFilenameColumn of hDocAttacher to iOrigFilenameColumn
+        Get piFilenameColumn of hDocAttacher to iFilenameColumn
+        Get_Field_Value iTable iFilenameColumn to sValue
+        If (sValue="") Begin
+            Get_Field_Value iTable iOrigFilenameColumn to sValue
+            Set_Field_Value iTable iFilenameColumn to sValue
+        End
+        Forward Send Save_Main_File
+    End_Procedure   // Save_Main_File
+    
+    Procedure Delete_Main_File
+        Integer hDocAttacher iGrb bSuccess
+        String sInternalFileName
+        If (HasRecord(Self)) Begin
+            Get phDocumentAttacher to hDocAttacher
+            If (Doc_Exists(hDocAttacher)) Begin
+                Get Doc_Delete of hDocAttacher to bSuccess
+            End
+            Else Begin
+                Move 1 to bSuccess
+            End
+            If (not(bSuccess)) Begin
+                 Error DFERR_PROGRAM "Dokumentet kunne ikke slettes"
+            End
+        End
+        Forward Send Delete_Main_File
+    End_Procedure
+
+    Procedure Relate_Main_File
+        Integer bOK iRet 
+        Integer hDocAttacher iTable iCreated23Column iDocumentTypeColumn
+        String sFileName sCreated23 sDocumentType
+        DateTime dtValue
+        Date dCreateDate dToday
+        
+        Get phDocumentAttacher to hDocAttacher
+        Get piTable of hDocAttacher to iTable
+        Get piCreated23Column of hDocAttacher to iCreated23Column
+        Get piDocumentTypeColumn of hDocAttacher to iDocumentTypeColumn
+        Get_Field_Value iTable iCreated23Column to sCreated23
+        Get String23ToDateTime of oDateFunctions sCreated23 to dtValue
+        Move dtValue to dCreateDate
+        Get_Field_Value iTable iDocumentTypeColumn to sDocumentType
+        
+        // Hvis dokumentet er ‘ldre end dags dato s† s‘tter vi det readonly
+        Get SystemDate of oDateFunctions to dToday
+        If (dCreateDate<dToday and sDocumentType<>"") Begin
+            Get Doc_Exists of hDocAttacher to bOK
+            If (bOK) Begin
+                Get CurrentRecordAbsoluteFileName of hDocAttacher to sFileName
+                Get GetAttribute of oFileFunctions sFileName C_FILE_ATTRIBUTE_READONLY to iRet
+//                Move (fGetAttribute(lsFileName,FILE_ATTRIBUTE_READONLY)) to liRet
+                If (iRet<>0) Begin
+                     // This looks like it clears it and resets it. Is that really necessary?
+                     Get RemoveAttribute of oFileFunctions sFileName C_FILE_ATTRIBUTE_READONLY to iRet
+                End
+                Get SetAttribute of oFileFunctions sFileName C_FILE_ATTRIBUTE_READONLY to iRet
+            End
+        End
+        Forward Send Relate_Main_File
+    End_Procedure
+End_Class

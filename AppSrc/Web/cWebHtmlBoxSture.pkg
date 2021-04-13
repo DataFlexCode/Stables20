@@ -1,0 +1,373 @@
+// svg.js
+
+Use cWebHtmlBoxStureAps.pkg
+Use StringFunctions.pkg
+Use CSSFunctions.pkg
+Use RgbFunctions.pkg
+
+Use HtmlSequenceFunctions.pkg
+
+Struct tHtmlBoxImage
+    String sTooltip
+    String sAction
+    String sParams
+    String sImageFile
+    Integer iHeight
+    Integer iWidth
+    String sPadding
+    String sMargin
+    String sBackground
+    String sBorder
+    String sBorderRadius
+    Boolean bHidden
+    String  sCssClass
+    Boolean bDisplayInline
+End_Struct
+
+Class cWebHtmlBoxSture is a cWebHtmlBoxStureAps
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property Integer piServer
+        Property Integer[] pahHtmlBoxItems
+        {WebProperty=Server}
+        Property String psUniqueIdPush
+        {WebProperty=Server}
+        Property String psModalPanelDataPush // Used by
+    End_Procedure
+
+    Procedure Set HtmlBoxModalPanelDataPush String sUniqueIdPush String sData
+        WebSet psUniqueIdPush to sUniqueIdPush
+        WebSet psModalPanelDataPush to sData
+    End_Procedure
+    
+    Function HtmlBoxModalPanelDataPush String ByRef sUniqueIdPush Returns String
+        String sData
+        WebGet psModalPanelDataPush to sData
+        WebGet psUniqueIdPush to sUniqueIdPush
+        Function_Return sData
+    End_Function
+    
+    Procedure AddOnClickAttributes String sAction String sParameters
+        Send AddAttribute "data-ServerOnClick" sAction
+        Send AddAttribute "data-OnClickParam" sParameters
+    End_Procedure
+    
+    Function TableRID Integer iTable Returns String
+        Function_Return ("rid:"+String(iTable)+","+SerializeRowID(GetRowID(iTable)))
+    End_Function
+
+    Procedure AddOnClickAttributesRID String sAction Integer iTable
+        Send AddOnClickAttributes sAction (TableRID(Self,iTable))
+    End_Procedure
+    
+    Procedure AddSmallButton String sLabel String sAction String sParameters Integer iColor Integer iLeftMargin Integer iRightMargin
+        String sMarginStyle
+        Send AddElement "span" sLabel
+        Send AddAttribute "class" "smallbtn"
+        Send AddOnClickAttributes sAction sParameters
+        Move ("margin-left:"+String(iLeftMargin)+"px;margin-right:"+String(iRightMargin)+"px;") to sMarginStyle
+        If (iColor>-1) Begin
+            Send AddAttribute "style" ("background-color:"+RgbToHTML(oRgbFunctions,iColor)+";"+sMarginStyle)
+        End
+        Else Begin
+            Send AddAttribute "style" sMarginStyle
+        End
+//        Get HTMLToRgb of oRgbFunctions "#DCE0C6" to iColor
+//        Move (Darken(oRgbFunctions,iColor,15)) to iColor
+    End_Procedure
+    
+    //> Text is rendered in "paragraphs" where paragraph is triggered by a 
+    //> character 10 or 13 in the sTextValue.
+    //> sParagraphTag param is expected to be "p", "div", "li" or something.
+    Procedure AddParagraphedText String sParagraphTag String sText 
+        Integer iItem iMax
+        String[] aValues
+        Move (Trim(sText)) to sText
+        Move (Replaces(Character(13),sText,Character(10))) to sText
+        Send SplitString of oStringFunctions sText (Character(10)) True False (&aValues)
+        Move (SizeOfArray(aValues)-1) to iMax
+        For iItem from 0 to iMax
+            Send AddElement sParagraphTag aValues[iItem]
+        Loop
+    End_Procedure
+    
+    Function HtmlBoxImageNew Returns tHtmlBoxImage
+        tHtmlBoxImage stImage
+        Function_Return stImage
+    End_Function
+
+    //> Adds an image (or an icon) to the html
+    Procedure HtmlBoxImageBuild tHtmlBoxImage stImage
+        String sStyle
+        tCSSRules stRules
+        
+        Send CSSAppendRule of oCSSFunctions (&stRules) "" ""
+        If (stImage.sPadding<>"") Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_padding stImage.sPadding
+        End
+        If (stImage.sMargin<>"") Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_margin stImage.sMargin
+        End
+        If (stImage.sBackground<>"") Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_background stImage.sBackground
+        End
+        If (stImage.sBorder<>"") Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_border stImage.sBorder
+        End
+        If (stImage.sBorderRadius<>"") Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_border_radius stImage.sBorderRadius
+        End
+        If (stImage.sAction<>"") Begin // Only make pointer cursor if a click-action has been specified
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_cursor "pointer"
+        End
+        If (stImage.bDisplayInline) Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_display "inline-block"
+        End 
+        Else Begin
+            Send CSSAppendRuleProperty of oCSSFunctions (&stRules) CSSP_display "block"
+        End
+        
+        Get CSSStyleAttributeValue of oCSSFunctions stRules.aRules[0].aPropertyValues to sStyle
+
+        Send AddElement "img" ""
+            Send AddAttribute "src" stImage.sImageFile //  sImgSrc
+            Send AddAttribute "style" sStyle // "padding:2px;margin:8px 8px 8px 8px;cursor:pointer;"
+            If (stImage.sCssClass<>"") Begin
+                Send AddAttribute "class" stImage.sCssClass  // "HtmlBoxImageHover"
+            End
+            If (stImage.sTooltip<>"") Begin
+                Send AddAttribute "title" stImage.sTooltip 
+            End
+            If (stImage.iHeight<>0) Begin
+                Send AddAttribute "height" stImage.iHeight
+            End
+            If (stImage.iWidth<>0) Begin
+                Send AddAttribute "width" stImage.iWidth
+            End
+            If (stImage.sAction<>"") Begin
+                Send AddOnClickAttributes stImage.sAction stImage.sParams
+            End
+            If (stImage.bHidden) Begin
+                Send AddAttribute "visibility" "hidden"
+            End
+            
+//            Send AddAttribute "onmouseover" 'this.style.textDecoration="none"'
+//            Send AddAttribute "onmouseout" 'alert("Hello world");'
+//    onmouseover='this.style.textDecoration="none"' 
+//    onmouseout='this.style.textDecoration="underline"'>
+
+    End_Procedure
+    
+//    Procedure AddImageInvert tHtmlBoxImage stImage
+//    End_Procedure
+
+
+//    Procedure AddButton String sLabel String sAction String sParameters String sColor String sWidth String sHeight Integer iLeftMargin Integer iRightMargin
+//        Integer iColor
+//        String sMarginStyle
+//        Send AddElement "span" sLabel
+//        Send AddAttribute "class" "smallbtn"
+//        Send AddOnClickAttributes sAction sParameters
+//        Move ("margin-left:"+String(iLeftMargin)+"px;margin-right:"+String(iRightMargin)+"px;") to sMarginStyle
+//        If (sColor<>"") Begin
+//            Send AddAttribute "style" ("background-color:"+ToHTML(oRgbFunctions,iColor)+";"+sMarginStyle)
+//        End
+//        Else Begin
+//            Send AddAttribute "style" sMarginStyle
+//        End
+//.smallbtn{
+//  display:inline-block;
+//  padding-left:8px;
+//  margin-top:5px;
+//  padding-right:8px;
+//  font-size:0.7em;
+//  border:none;
+//  border-radius:5px;
+//  cursor:Pointer;
+//  background-color:rgb(222,222,222);}
+//
+//        Get HTMLToRgb of oRgbFunctions "#DCE0C6" to iColor
+//        Move (Darken(oRgbFunctions,iColor,15)) to iColor
+//    End_Procedure
+
+    Function JQueryToggleElementID String sID Returns String
+        Function_Return ("$(document.getElementById('"+sID+"')).toggle();")
+    End_Function
+
+    Procedure PlaybackHtmlSequence tHTMLSequence stItem
+        While (FindSection(oHTMLSequenceFunctions,Self,&stItem))
+        Loop
+    End_Procedure
+
+    Procedure OnTableRowClick String sAction Integer iTable Boolean bFound
+        String sTable
+        String sMessage sCaption
+        If (iTable<>0) Begin
+            Get_Attribute DF_FILE_LOGICAL_NAME of iTable to sTable
+        End
+
+        Send ShowInfoBox sAction ("Tablerecord"*sTable*If(bFound,"found","not found"))
+    End_Procedure
+
+    Procedure OnOrdinaryClick String sAction String sParam
+        Send ShowInfoBox (sAction+"\n\r"+sParam) "Ordinary click"
+    End_Procedure
+
+    Register_Function OnClickWillHandle String sAction Returns Boolean
+
+    Function _HandledByEmbeddedObjectHandle String sAction Returns Integer
+        Integer iItem iMax hHandle
+        Integer[] ahHtmlBoxItems
+        Get pahHtmlBoxItems to ahHtmlBoxItems
+        Move (SizeOfArray(ahHtmlBoxItems)-1) to iMax
+        For iItem from 0 to iMax
+            Move ahHtmlBoxItems[iItem] to hHandle
+            If (OnClickWillHandle(hHandle,sAction)) Begin
+                Function_Return hHandle
+            End
+        Loop
+        Function_Return 0
+   End_Function
+
+    Procedure OnClick String sAction String sParam
+        Integer iTable hHandler
+        RowID riRow
+        String[] aTemp
+        Get _HandledByEmbeddedObjectHandle sAction to hHandler
+//        Send ClientLog ("HtmlBox:OnClick: action:"+sAction+", sParam="+sParam+", hHandler="+String(hHandler))
+        If (hHandler<>0) Begin
+            Send OnClick of hHandler sAction sParam
+        End
+        Else If (Left(sParam,4)="rid:") Begin // table row select
+            Move (Replace("rid:",sParam,"")) to sParam
+            Send SplitString of oStringFunctions sParam "," True False (&aTemp)
+            Move aTemp[0] to iTable
+            If (SizeOfArray(aTemp)>1) Begin
+                Move (DeserializeRowID(aTemp[1])) to riRow
+            End
+            Else Begin
+                Move (NullRowID()) to riRow
+            End
+            Clear iTable
+            Send OnTableRowClick sAction iTable (FindByRowID(iTable,riRow))
+        End
+        Else Begin
+            Send OnOrdinaryClick sAction sParam
+        End
+    End_Procedure
+
+    Function FindRecordFromParam String sParam Returns Boolean
+        Integer iTable
+        RowID riRow
+        String[] aTemp
+        If (Left(sParam,4)="rid:") Begin // table row select
+            Move (Replace("rid:",sParam,"")) to sParam
+            Send SplitString of oStringFunctions sParam "," True False (&aTemp)
+            Move aTemp[0] to iTable
+            Move (DeserializeRowID(aTemp[1])) to riRow
+            Clear iTable
+            Function_Return (FindByRowID(iTable,riRow))
+        End
+        Error DFERR_PROGRAM "Illegal parameter passed to FindRecordFromParam function"
+        Function_Return False
+    End_Function
+
+    Procedure OnCloseModalDialog Handle hoModalDialog
+        Integer hHandler
+        String sUniqueIdPush
+        WebGet psUniqueIdPush to sUniqueIdPush
+        Get _HandledByEmbeddedObjectHandle sUniqueIdPush to hHandler
+        If (hHandler<>0) Begin
+            Send OnCloseModalDialog of hHandler hoModalDialog
+        End
+        WebSet psUniqueIdPush to "" // Clear to avoid subsequent mistakes
+    End_Procedure
+
+    Procedure UpdateInnerHtml String sElementId String sHtml
+        String[] asParams
+        Move (Rtrim(sElementId)) to asParams[0]
+        Move sHtml to asParams[1]
+        Send ClientAction "updateInnerHtml" asParams
+    End_Procedure
+    
+    Procedure InsertElementBefore String sElementId String sNewElementTag String sNewElementId String sInnerHtml
+        String[] asParams
+        Move (Rtrim(sElementId)) to asParams[0]
+        Move (Uppercase(sNewElementTag)) to asParams[1]
+        Move (Rtrim(sNewElementId)) to asParams[2]
+        Move sInnerHtml to asParams[3]
+        Send ClientAction "insertElementBefore" asParams
+    End_Procedure
+
+    Procedure InsertElementAfter String sElementId String sNewElementTag String sNewElementId String sInnerHtml
+        String[] asParams
+        Move (Rtrim(sElementId)) to asParams[0]
+        Move (Uppercase(sNewElementTag)) to asParams[1]
+        Move (Rtrim(sNewElementId)) to asParams[2]
+        Move sInnerHtml to asParams[3]
+        Send ClientAction "insertElementAfter" asParams
+    End_Procedure
+    
+    Procedure ScrollToElementID String sElementId 
+        String[] asParams
+        Move (Rtrim(sElementId)) to asParams[0]
+        Send ClientAction "scrollToElementId" asParams
+    End_Procedure
+    
+//    Procedure ZoomDiv100Pct String sElementID
+//        String[] asParams
+//        Move (Rtrim(sElementId)) to asParams[0]
+//        Send ClientAction "divZoom100pct" asParams
+//    End_Procedure
+//
+//    Procedure ZoomDivOriginal String sElementID
+//        String[] asParams
+//        Move (Rtrim(sElementId)) to asParams[0]
+//        Send ClientAction "divZoomOrig" asParams
+//    End_Procedure
+
+    Procedure awClientAction String sJavaScriptMethod String sArg1 String sArg2 String sArg3 String sArg4
+        String[] asParams
+        If (num_arguments>1) Move sArg1 to asParams[0]
+        If (num_arguments>2) Move sArg2 to asParams[1]
+        If (num_arguments>3) Move sArg3 to asParams[2]
+        If (num_arguments>4) Move sArg4 to asParams[3]
+        Send ClientAction sJavaScriptMethod asParams
+    End_Procedure
+
+    Procedure replaceCKEditor String sElementID
+        String[] asParams
+        Move sElementID to asParams[0]
+        Send ClientAction "replaceCKEditor" asParams
+    End_Procedure
+
+    Procedure adjustSizeCKEditor String sElementID
+        String[] asParams
+        Move sElementID to asParams[0]
+        Send ClientAction "adjustSizeCKEditor" asParams
+    End_Procedure
+
+    Procedure initializeJustifiedGallery String sElementID
+        String[] asParams
+        Move sElementID to asParams[0]
+        Send ClientAction "initializeJustifiedGallery" asParams
+    End_Procedure
+
+    Procedure initializeBlueimpGallery String sElementID
+        String[] asParams
+        Move sElementID to asParams[0]
+        Send ClientAction "initializeBlueimpGallery" asParams
+    End_Procedure
+
+    // -----------------------------------------
+
+    Procedure Register_HtmlBoxItem Integer hHtmlBoxItem
+        Integer[] ahHtmlBoxItems
+        Get pahHtmlBoxItems to ahHtmlBoxItems
+        Move hHtmlBoxItem to ahHtmlBoxItems[SizeOfArray(ahHtmlBoxItems)]
+        Set pahHtmlBoxItems to ahHtmlBoxItems
+    End_Procedure
+    
+End_Class
+

@@ -1,0 +1,90 @@
+﻿// Example:
+// http://localhost/StureApsPublicLib180/ckeditor/samples/replacebycode.html
+
+// Quick start:
+// http://docs.ckeditor.com/#!/guide/dev_installation
+
+
+
+Use cWebView.pkg
+Use cWebPanel.pkg
+Use cWebForm.pkg
+Use cWebButton.pkg
+
+Use Web\cWebHtmlBoxSture.pkg
+
+Object oTestCKEditor is a cWebView
+    Set piWidth to 0
+    Set psCaption to "CKEditor - cWebHtmlBox subclass"
+
+    // Your DDO structure will go here
+
+    Object oWebMainPanel is a cWebPanel
+        Set piColumnCount to 12
+        
+        Object oCKHtmlBox is  a cWebHtmlBoxSture
+            Set pbFillHeight to True
+            Set piColumnSpan to 0
+            Procedure OnBuildHtml
+                Send AddOpenElement "form"
+                Send AddAttribute "style" "height:100%"
+                    Send AddElement "textarea" "sdljfgsdæajkhg æsaljkh gaæs"
+                    Send AddAttribute "id" "cktest"
+                    Send AddAttribute "name" "cktest"
+                Send CloseElement
+            End_Procedure
+            
+            Procedure OnShow
+                
+            End_Procedure
+        End_Object
+        
+        
+        Object oInitialiseBtn is a cWebButton
+            Set piColumnSpan to 0
+            Set psCaption to "Init"
+            Procedure OnClick
+                Send replaceCKEditor of oCKHtmlBox "cktest"
+            End_Procedure
+        End_Object
+        
+        Object oAdjustSize is a cWebButton
+            Set piColumnSpan to 0
+            Set psCaption to "Adjust size"
+            Procedure OnClick
+                Send adjustSizeCKEditor of oCKHtmlBox "cktest"
+            End_Procedure
+        End_Object
+        
+    End_Object 
+
+    {WebProperty=Server}
+    Property Boolean pbCKInitialize True
+    
+    Set pbServerOnShow to True
+    Procedure OnShow
+        Boolean bCKInitialize
+        Forward Send OnShow
+        WebGet pbCKInitialize to bCKInitialize
+        If (bCKInitialize) Begin
+            Send replaceCKEditor of oCKHtmlBox "cktest"
+            WebSet pbCKInitialize to False
+        End
+    End_Procedure
+
+    Procedure OnLoad
+        Forward Send OnLoad
+        Send RefreshContent of oCKHtmlBox
+        WebSet pbCKInitialize to True
+    End_Procedure //
+    
+//    Set pbServerOnResizeWindow to True
+//    Procedure OnResizeWindow Integer iWindowWidth Integer iWindowHeight
+//        Send replaceCKEditor of oCKHtmlBox "cktest"
+//        Send adjustSizeCKEditor of oCKHtmlBox "cktest"
+//    End_Procedure
+
+//    Procedure OnLoad
+//    End_Procedure
+
+End_Object

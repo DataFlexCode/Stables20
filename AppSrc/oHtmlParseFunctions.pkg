@@ -1,0 +1,1104 @@
+﻿Use FileFunctions.pkg
+Use StringFunctions.pkg
+
+Struct tHtmlCharacter // This type is used for the HTML character decoding function
+    String sName      //
+    String sSymbol
+    Integer iNumber
+End_Struct
+
+Enum_List // Html Item Types, parse level 1
+    Define HIT1_ELEM    // Element open declaration including attributes or element close
+    Define HIT1_TEXT    // Whatever text
+End_Enum_List
+
+Struct tHtmlItemParse1
+    Integer iType
+    String sValue
+End_Struct
+
+Enum_List // Html DOM Item Types (parse level 2)
+    Define HDIT_ELEM_OPEN    // Good open tag
+    Define HDIT_ELEM_CLOSE   // Good closing tag
+    Define HDIT_TEXT         // Whatever text
+    Define HDIT_SELFCLOSED   // Was an open tag, but no closing tag was found.
+    Define HDIT_ILLEGAL_CLOSING_TAG // Closing tag with no corresponding open tag
+End_Enum_List
+
+Struct tHtmlDomElementAttr
+    String sName
+    String sValue
+End_Struct
+
+Struct tHtmlDomElement
+    Integer iType
+    String sValue  // Name of element or, if type=HDIT_TEXT then this is the text
+    Integer iNodeId
+    tHtmlDomElementAttr[] aAttributes // If type=HDIT_ELEM_OPEN then these are the attributes associated
+End_Struct
+          
+Struct tHtmlDocumentLink
+    String sLinkedText
+    String sUrl
+End_Struct
+
+Struct tHtmlHeader
+    String sName
+    String sValue
+End_Struct
+          
+Struct tHtmlDocument //> A value of this type describes the contents of an HTML document.
+    String sUrl                 //> Url from which the HTML document was fetched (if any)
+    String sTitle               //> <title> of the document
+    tHtmlHeader[] aHeaders      //> HTML headers sent with the document
+    tHtmlDomElement[] aElements //> Elements and content of the document
+    tHtmlDocumentLink[] aLinks  //> Links that where in the document
+    String sTextValue           //> The text contents of the document
+End_Struct
+
+Struct tMsResponseHeaders
+    String sTag
+    String sDescription
+End_Struct               
+
+               
+Global_Variable tMsResponseHeaders[] aMsResponseHeaders
+
+Procedure AddMsHttpHeaderTag String sTag String sDescription
+    Integer iItm
+    Move (SizeOfArray(aMsResponseHeaders)) to iItm
+    Move (uppercase(sTag)) to aMsResponseHeaders[iItm].sTag
+    Move sDescription to aMsResponseHeaders[iItm].sDescription
+End_Procedure
+
+Send AddMsHttpHeaderTag "accept"                    "Acceptable media types. (24)"
+Send AddMsHttpHeaderTag "accept-charset"            "Acceptable character sets. (25)"
+Send AddMsHttpHeaderTag "accept-encoding"           "Acceptable content-coding values. (26)"
+Send AddMsHttpHeaderTag "accept-language"           "Acceptable natural languages. (27)"
+Send AddMsHttpHeaderTag "accept-ranges"             "Types of range requests that are accepted. (42)"
+Send AddMsHttpHeaderTag "age"                       "An estimate of the amount of time since the response was generated at the origin server. (48)"
+Send AddMsHttpHeaderTag "allow"                     "Methods supported by the server. (7)"
+Send AddMsHttpHeaderTag "authorization"             "Authorization credentials used for a request. (28)"
+Send AddMsHttpHeaderTag "cache-control"             "Cache control directives. (49)"
+Send AddMsHttpHeaderTag "connection"                "Options that are specified for a particular connection and must not be communicated by proxies over further connections. (23)"
+Send AddMsHttpHeaderTag "content-base"              "Base Uniform Resource Identifier (URI) for resolving relative URLs within the entity. (50)"
+Send AddMsHttpHeaderTag "content-description"       "Obsolete. Maintained for legacy application compatibility only. (4)"
+Send AddMsHttpHeaderTag "content-disposition"       "Obsolete. Maintained for legacy application compatibility only. (47)"
+Send AddMsHttpHeaderTag "content-encoding"          "Any additional content codings that have been applied to the entire resource. (29)"
+Send AddMsHttpHeaderTag "content-id"                "Content identification. (3)"
+Send AddMsHttpHeaderTag "content-language"          "Language in which the content is presented. (6)"
+Send AddMsHttpHeaderTag "content-length"            "Size of the resource, in bytes. (5)"
+Send AddMsHttpHeaderTag "content-location"          "Resource location for the entity enclosed in the message. (51)"
+Send AddMsHttpHeaderTag "content-md5"               "MD5 digest of the entity-body for the purpose of providing an end-to-end message integrity check (MIC) for the entity-body. For more information, see RFC1864, The Content-MD5 Header Field, at http://ftp.isi.edu/in-notes/rfc1864.txt . (52)"
+Send AddMsHttpHeaderTag "content-range"             "Location in the full entity-body where the partial entity-body should be inserted and the total size of the full entity-body. (53)"
+Send AddMsHttpHeaderTag "content-transfer_encoding" "Additional content coding that has been applied to the resource. (2)"
+Send AddMsHttpHeaderTag "content-type"              "Content type of the resource (such as text/html). (1)"
+Send AddMsHttpHeaderTag "cookie"                    "Cookies associated with the request. (44)"
+Send AddMsHttpHeaderTag "cost"                      "Not supported. (15)"
+Send AddMsHttpHeaderTag "date"                      "Date and time at which the message was originated. (9)"
+Send AddMsHttpHeaderTag "derived-from"              "Not supported. (14)"
+Send AddMsHttpHeaderTag "echo-headers"              "Not implemented. (73)"
+Send AddMsHttpHeaderTag "echo-headers-crlf"         "Not implemented. (74)"
+Send AddMsHttpHeaderTag "echo-reply"                "Not implemented. (72)"
+Send AddMsHttpHeaderTag "echo-request"              "Not implemented. (71)"
+Send AddMsHttpHeaderTag "etag"                      "Entity tag for the associated entity. (54)"
+Send AddMsHttpHeaderTag "expect"                    "Expect header, which indicates whether the client application should expect 100 series responses. (68)"
+Send AddMsHttpHeaderTag "expires"                   "Date and time after which the resource should be considered outdated. (10)"
+Send AddMsHttpHeaderTag "forwarded"                 "Obsolete. Maintained for legacy application compatibility only. (30)"
+Send AddMsHttpHeaderTag "from"                      "E-mail address for the human user who controls the requesting user agent if the From header is given. (31)"
+Send AddMsHttpHeaderTag "host"                      "Internet host and port number of the resource being requested. (55)"
+Send AddMsHttpHeaderTag "if-match"                  "Contents of the If-Match request-header field. (56)"
+Send AddMsHttpHeaderTag "if-modified-since"         "Contents of the If-Modified-Since header. (32)"
+Send AddMsHttpHeaderTag "if-none-match"             "Contents of the If-None-Match request-header field. (57)"
+Send AddMsHttpHeaderTag "if-range"                  "Contents of the If-Range request-header field. This header allows the client application to check if the entity related to a partial copy of the entity in the client application's cache has not been updated. If the entity has not been updated, send the parts that the client application is missing. If the entity has been updated, send the entire updated entity. (58)"
+Send AddMsHttpHeaderTag "if-unmodified-since"       "Contents of the If-Unmodified-Since request-header field. (59)"
+Send AddMsHttpHeaderTag "last-modified"             "Date and time at which the server believes the resource was last modified. (11)"
+Send AddMsHttpHeaderTag "link"                      "Obsolete. Maintained for legacy application compatibility only. (16)"
+Send AddMsHttpHeaderTag "location"                  "Absolute URI. (33)"
+Send AddMsHttpHeaderTag "max"                       "Not a query flag. Indicates the maximum value of an * value. (75)"
+Send AddMsHttpHeaderTag "max-forwards"              "Number of proxies or gateways that can forward the request to the next inbound server. (60)"
+Send AddMsHttpHeaderTag "message-id"                "Not supported. (12)"
+Send AddMsHttpHeaderTag "mime-version"              "Version of the MIME protocol that was used to construct the message. (0)"
+Send AddMsHttpHeaderTag "msthemecompatible"         "Microsoft Internet Explorer 6 and later. Disables theming support for a Web page. The content attribute of the meta element must be set to no."
+Send AddMsHttpHeaderTag "orig-uri"                  "Obsolete. Maintained for legacy application compatibility only. (34)"
+Send AddMsHttpHeaderTag "pragma"                    "Implementation-specific directives that might apply to any recipient along the request/response chain. (17)"
+Send AddMsHttpHeaderTag "proxy-authenticate"        "Authentication scheme and realm returned by the proxy. (41)"
+Send AddMsHttpHeaderTag "proxy-authorization"       "Header that is used to identify the user to a proxy that requires authentication. This header can only be retrieved before the request is sent to the server. (61)"
+Send AddMsHttpHeaderTag "proxy-connection"          "Proxy-Connection header. (69)"
+Send AddMsHttpHeaderTag "public"                    "Methods available at this server. (8)"
+Send AddMsHttpHeaderTag "range"                     "Byte range of an entity. (62)"
+Send AddMsHttpHeaderTag "raw-headers"               "All the headers returned by the server. Each header is terminated by \0. an additional \0 terminates the list of headers. (21)"
+Send AddMsHttpHeaderTag "raw-headers-crlf"          "All the headers returned by the server. Each header is separated by a carriage return/line feed (CR/LF) sequence. (22)"
+Send AddMsHttpHeaderTag "referer"                   "URI of the resource where the requested URI was obtained. (35)"
+Send AddMsHttpHeaderTag "refresh"                   "Obsolete. Maintained for legacy application compatibility only. (46)"
+Send AddMsHttpHeaderTag "request-method"            "Verb that is used in the request, typically GET or POST. (45)"
+Send AddMsHttpHeaderTag "retry-after"               "Amount of time the service is expected to be unavailable. (36)"
+Send AddMsHttpHeaderTag "server"                    "Information about the software used by the origin server to handle the request. (37)"
+Send AddMsHttpHeaderTag "set-cookie"                "Value of the cookie set for the request. (43)"
+Send AddMsHttpHeaderTag "status-code"               "Status code returned by the server. For a list of possible values, see HTTP Status Codes. (19)"
+Send AddMsHttpHeaderTag "status-text"               "Any additional text returned by the server on the response line. (20)"
+Send AddMsHttpHeaderTag "title"                     "Obsolete. Maintained for legacy application compatibility only. (38)"
+Send AddMsHttpHeaderTag "transfer-encoding"         "Type of transformation that has been applied to the message body so it can be safely transferred between the sender and recipient. (63)"
+Send AddMsHttpHeaderTag "unless-modified-since"     "Unless-Modified-Since header. (70)"
+Send AddMsHttpHeaderTag "upgrade"                   "Additional communication protocols that are supported by the server. (64)"
+Send AddMsHttpHeaderTag "uri"                       "Some or all of the URIs by which the Request-URI resource can be identified. (13)"
+Send AddMsHttpHeaderTag "user-agent"                "Information about the user agent that made the request. (39)"
+Send AddMsHttpHeaderTag "vary"                      "Header that indicates that the entity was selected from a number of available representations of the response using server-driven negotiation. (65)"
+Send AddMsHttpHeaderTag "version"                   "Last response code returned by the server. (18)"
+Send AddMsHttpHeaderTag "via"                       "Intermediate protocols and recipients between the user agent and the server on requests, and between the origin server and the client on responses. (66)"
+Send AddMsHttpHeaderTag "warning"                   "Additional information about the status of a response that might not be reflected by the response status code. (67)"
+Send AddMsHttpHeaderTag "www-authenticate"          "Authentication scheme and realm returned by the server. (40)"
+
+
+Class cHtmlParserFunctions is a cObject
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property tHtmlCharacter[] paCharacters
+        Send InitializeHtmlCharacters
+        //Property Integer piMissingClosingTags
+        //Property Integer piIllegallyPlacedClosingTags
+    End_Procedure
+
+// *******************
+// HTML Character decoding function (and aux ditto)
+//
+        Function CompareHtmlCharacters tHtmlCharacter sChar1 tHtmlCharacter sChar2 Returns Integer
+            If (sChar1.iNumber>sChar2.iNumber) ;
+                    Function_Return (GT)
+            If (sChar1.iNumber<sChar2.iNumber) ;
+                    Function_Return (LT)
+            Function_Return (EQ)
+        End_Function
+
+    // This function makes sure that the paCharacters array is always sorted:
+    Procedure Set paCharacters tHtmlCharacter[] aCharacters
+        Move (SortArray(aCharacters,Self,GET_CompareHtmlCharacters)) to aCharacters
+        Forward Set paCharacters to aCharacters
+    End_Procedure
+
+    Procedure AddCharacter tHtmlCharacter[] ByRef aCharacters Integer iHtml String sCharacterName String sSymbol
+        Integer iItm
+        Move (SizeOfArray(aCharacters)) to iItm
+        Move iHtml to aCharacters[iItm].iNumber
+        Move sCharacterName to aCharacters[iItm].sName
+        Move sSymbol to aCharacters[iItm].sSymbol
+    End_Procedure
+
+    Procedure InitializeHtmlCharacters
+        tHtmlCharacter[] aCharacters
+        Send AddCharacter (&aCharacters)   32 ""              " "     // space
+        Send AddCharacter (&aCharacters)   33 ""              "!"     // exclamation point
+        Send AddCharacter (&aCharacters)   34 "&quot;"        '"'     // double quotes
+        Send AddCharacter (&aCharacters)   35 ""              "#"     // number sign
+        Send AddCharacter (&aCharacters)   36 ""              "$"     // dollar sign
+        Send AddCharacter (&aCharacters)   37 ""              "%"     // percent sign
+        Send AddCharacter (&aCharacters)   38 "&amp;"         "&"     // ampersand
+        Send AddCharacter (&aCharacters)   39 ""              "'"     // single quote
+        Send AddCharacter (&aCharacters)   40 ""              "("     // opening parenthesis
+        Send AddCharacter (&aCharacters)   41 ""              ")"     // closing parenthesis
+        Send AddCharacter (&aCharacters)   42 ""              "*"     // asterisk
+        Send AddCharacter (&aCharacters)   43 ""              "+"     // plus sign
+        Send AddCharacter (&aCharacters)   44 ""              ","     // comma
+        Send AddCharacter (&aCharacters)   45 ""              "-"     // minus sign - hyphen
+        Send AddCharacter (&aCharacters)   46 ""              "."     // period
+        Send AddCharacter (&aCharacters)   47 ""              "/"     // slash
+        Send AddCharacter (&aCharacters)   48 ""              "0"     // zero
+        Send AddCharacter (&aCharacters)   49 ""              "1"     // one
+        Send AddCharacter (&aCharacters)   50 ""              "2"     // two
+        Send AddCharacter (&aCharacters)   51 ""              "3"     // three
+        Send AddCharacter (&aCharacters)   52 ""              "4"     // four
+        Send AddCharacter (&aCharacters)   53 ""              "5"     // five
+        Send AddCharacter (&aCharacters)   54 ""              "6"     // six
+        Send AddCharacter (&aCharacters)   55 ""              "7"     // seven
+        Send AddCharacter (&aCharacters)   56 ""              "8"     // eight
+        Send AddCharacter (&aCharacters)   57 ""              "9"     // nine
+        Send AddCharacter (&aCharacters)   58 ""              ":"     // colon
+        Send AddCharacter (&aCharacters)   59 ""              ";"     // semicolon
+        Send AddCharacter (&aCharacters)   60 "&lt;"          "<"     // less than sign
+        Send AddCharacter (&aCharacters)   61 ""              "="     // equal sign
+        Send AddCharacter (&aCharacters)   62 "&gt;"          ">"     // greater than sign
+        Send AddCharacter (&aCharacters)   63 ""              "?"     // question mark
+        Send AddCharacter (&aCharacters)   64 ""              "@"     // at symbol
+        Send AddCharacter (&aCharacters)   65 ""              "A"     //
+        Send AddCharacter (&aCharacters)   66 ""              "B"     //
+        Send AddCharacter (&aCharacters)   67 ""              "C"     //
+        Send AddCharacter (&aCharacters)   68 ""              "D"     //
+        Send AddCharacter (&aCharacters)   69 ""              "E"     //
+        Send AddCharacter (&aCharacters)   70 ""              "F"     //
+        Send AddCharacter (&aCharacters)   71 ""              "G"     //
+        Send AddCharacter (&aCharacters)   72 ""              "H"     //
+        Send AddCharacter (&aCharacters)   73 ""              "I"     //
+        Send AddCharacter (&aCharacters)   74 ""              "J"     //
+        Send AddCharacter (&aCharacters)   75 ""              "K"     //
+        Send AddCharacter (&aCharacters)   76 ""              "L"     //
+        Send AddCharacter (&aCharacters)   77 ""              "M"     //
+        Send AddCharacter (&aCharacters)   78 ""              "N"     //
+        Send AddCharacter (&aCharacters)   79 ""              "O"     //
+        Send AddCharacter (&aCharacters)   80 ""              "P"     //
+        Send AddCharacter (&aCharacters)   81 ""              "Q"     //
+        Send AddCharacter (&aCharacters)   82 ""              "R"     //
+        Send AddCharacter (&aCharacters)   83 ""              "S"     //
+        Send AddCharacter (&aCharacters)   84 ""              "T"     //
+        Send AddCharacter (&aCharacters)   85 ""              "U"     //
+        Send AddCharacter (&aCharacters)   86 ""              "V"     //
+        Send AddCharacter (&aCharacters)   87 ""              "W"     //
+        Send AddCharacter (&aCharacters)   88 ""              "X"     //
+        Send AddCharacter (&aCharacters)   89 ""              "Y"     //
+        Send AddCharacter (&aCharacters)   90 ""              "Z"     //
+        Send AddCharacter (&aCharacters)   91 ""              "["     // opening bracket
+        Send AddCharacter (&aCharacters)   92 ""              "\"     // backslash
+        Send AddCharacter (&aCharacters)   93 ""              "]"     // closing bracket
+        Send AddCharacter (&aCharacters)   94 ""              "^"     // caret - circumflex
+        Send AddCharacter (&aCharacters)   95 ""              "_"     // underscore
+        Send AddCharacter (&aCharacters)   96 ""              "`"     // grave accent
+        Send AddCharacter (&aCharacters)   97 ""              "a"     //
+        Send AddCharacter (&aCharacters)   98 ""              "b"     //
+        Send AddCharacter (&aCharacters)   99 ""              "c"     //
+        Send AddCharacter (&aCharacters)  100 ""              "d"     //
+        Send AddCharacter (&aCharacters)  101 ""              "e"     //
+        Send AddCharacter (&aCharacters)  102 ""              "f"     //
+        Send AddCharacter (&aCharacters)  103 ""              "g"     //
+        Send AddCharacter (&aCharacters)  104 ""              "h"     //
+        Send AddCharacter (&aCharacters)  105 ""              "i"     //
+        Send AddCharacter (&aCharacters)  106 ""              "j"     //
+        Send AddCharacter (&aCharacters)  107 ""              "k"     //
+        Send AddCharacter (&aCharacters)  108 ""              "l"     //
+        Send AddCharacter (&aCharacters)  109 ""              "m"     //
+        Send AddCharacter (&aCharacters)  110 ""              "n"     //
+        Send AddCharacter (&aCharacters)  111 ""              "o"     //
+        Send AddCharacter (&aCharacters)  112 ""              "p"     //
+        Send AddCharacter (&aCharacters)  113 ""              "q"     //
+        Send AddCharacter (&aCharacters)  114 ""              "r"     //
+        Send AddCharacter (&aCharacters)  115 ""              "s"     //
+        Send AddCharacter (&aCharacters)  116 ""              "t"     //
+        Send AddCharacter (&aCharacters)  117 ""              "u"     //
+        Send AddCharacter (&aCharacters)  118 ""              "v"     //
+        Send AddCharacter (&aCharacters)  119 ""              "w"     //
+        Send AddCharacter (&aCharacters)  120 ""              "x"     //
+        Send AddCharacter (&aCharacters)  121 ""              "y"     //
+        Send AddCharacter (&aCharacters)  122 ""              "z"     //
+        Send AddCharacter (&aCharacters)  123 ""              "{"     // opening bracket
+        Send AddCharacter (&aCharacters)  124 ""              "|"     // backslash
+        Send AddCharacter (&aCharacters)  125 ""              "}"     // closing bracket
+        Send AddCharacter (&aCharacters)  126 ""              "~"     // caret - circumflex
+                                                                      //
+        Send AddCharacter (&aCharacters)  160 "&nbsp;"        " "     // non-breaking space
+        Send AddCharacter (&aCharacters)  161 "&iexcl;"       "¡"     // inverted exclamation mark
+        Send AddCharacter (&aCharacters)  162 "&cent;"        "¢"     // cent sign
+        Send AddCharacter (&aCharacters)  163 "&pound;"       "£"     // pound sign
+        Send AddCharacter (&aCharacters)  164 "&curren;"      "¤"     // currency sign
+        Send AddCharacter (&aCharacters)  165 "&yen;"         "¥"     // yen sign
+        Send AddCharacter (&aCharacters)  166 "&brvbar;"      "¦"     // broken vertical bar
+        Send AddCharacter (&aCharacters)  167 "&sect;"        "§"     // section sign
+        Send AddCharacter (&aCharacters)  168 "&uml;"         "¨"     // spacing diaeresis - umlaut
+        Send AddCharacter (&aCharacters)  169 "&copy;"        "©"     // copyright sign
+        Send AddCharacter (&aCharacters)  170 "&ordf;"        "ª"     // feminine ordinal indicator
+        Send AddCharacter (&aCharacters)  171 "&laquo;"       "«"     // left double angle quotes
+        Send AddCharacter (&aCharacters)  172 "&not;"         "¬"     // not sign
+        Send AddCharacter (&aCharacters)  173 "&shy;"         "­"     // soft hyphen
+        Send AddCharacter (&aCharacters)  174 "&reg;"         "®"     // registered trade mark sign
+        Send AddCharacter (&aCharacters)  175 "&macr;"        "¯"     // spacing macron - overline
+        Send AddCharacter (&aCharacters)  176 "&deg;"         "°"     // degree sign
+        Send AddCharacter (&aCharacters)  177 "&plusmn;"      "±"     // plus-or-minus sign
+        Send AddCharacter (&aCharacters)  178 "&sup2;"        "²"     // superscript two - squared
+        Send AddCharacter (&aCharacters)  179 "&sup3;"        "³"     // superscript three - cubed
+        Send AddCharacter (&aCharacters)  180 "&acute;"       "´"     // acute accent - spacing acute
+        Send AddCharacter (&aCharacters)  181 "&micro;"       "µ"     // micro sign
+        Send AddCharacter (&aCharacters)  182 "&para;"        "¶"     // pilcrow sign - paragraph sign
+        Send AddCharacter (&aCharacters)  183 "&middot;"      "·"     // middle dot - Georgian comma
+        Send AddCharacter (&aCharacters)  184 "&cedil;"       "¸"     // spacing cedilla
+        Send AddCharacter (&aCharacters)  185 "&sup1;"        "¹"     // superscript one
+        Send AddCharacter (&aCharacters)  186 "&ordm;"        "º"     // masculine ordinal indicator
+        Send AddCharacter (&aCharacters)  187 "&raquo;"       "»"     // right double angle quotes
+        Send AddCharacter (&aCharacters)  188 "&frac14;"      "¼"     // fraction one quarter
+        Send AddCharacter (&aCharacters)  189 "&frac12;"      "½"     // fraction one half
+        Send AddCharacter (&aCharacters)  190 "&frac34;"      "¾"     // fraction three quarters
+        Send AddCharacter (&aCharacters)  191 "&iquest;"      "¿"     // inverted question mark
+        Send AddCharacter (&aCharacters)  192 "&Agrave;"      "À"     // latin capital letter A with grave
+        Send AddCharacter (&aCharacters)  193 "&Aacute;"      "Á"     // latin capital letter A with acute
+        Send AddCharacter (&aCharacters)  194 "&Acirc;"       "Â"     // latin capital letter A with circumflex
+        Send AddCharacter (&aCharacters)  195 "&Atilde;"      "Ã"     // latin capital letter A with tilde
+        Send AddCharacter (&aCharacters)  196 "&Auml;"        "Ä"     // latin capital letter A with diaeresis
+        Send AddCharacter (&aCharacters)  197 "&Aring;"       "Å"     // latin capital letter A with ring above
+        Send AddCharacter (&aCharacters)  198 "&AElig;"       "Æ"     // latin capital letter AE
+        Send AddCharacter (&aCharacters)  199 "&Ccedil;"      "Ç"     // latin capital letter C with cedilla
+        Send AddCharacter (&aCharacters)  200 "&Egrave;"      "È"     // latin capital letter E with grave
+        Send AddCharacter (&aCharacters)  201 "&Eacute;"      "É"     // latin capital letter E with acute
+        Send AddCharacter (&aCharacters)  202 "&Ecirc;"       "Ê"     // latin capital letter E with circumflex
+        Send AddCharacter (&aCharacters)  203 "&Euml;"        "Ë"     // latin capital letter E with diaeresis
+        Send AddCharacter (&aCharacters)  204 "&Igrave;"      "Ì"     // latin capital letter I with grave
+        Send AddCharacter (&aCharacters)  205 "&Iacute;"      "Í"     // latin capital letter I with acute
+        Send AddCharacter (&aCharacters)  206 "&Icirc;"       "Î"     // latin capital letter I with circumflex
+        Send AddCharacter (&aCharacters)  207 "&Iuml;"        "Ï"     // latin capital letter I with diaeresis
+        Send AddCharacter (&aCharacters)  208 "&ETH;"         "Ð"     // latin capital letter ETH
+        Send AddCharacter (&aCharacters)  209 "&Ntilde;"      "Ñ"     // latin capital letter N with tilde
+        Send AddCharacter (&aCharacters)  210 "&Ograve;"      "Ò"     // latin capital letter O with grave
+        Send AddCharacter (&aCharacters)  211 "&Oacute;"      "Ó"     // latin capital letter O with acute
+        Send AddCharacter (&aCharacters)  212 "&Ocirc;"       "Ô"     // latin capital letter O with circumflex
+        Send AddCharacter (&aCharacters)  213 "&Otilde;"      "Õ"     // latin capital letter O with tilde
+        Send AddCharacter (&aCharacters)  214 "&Ouml;"        "Ö"     // latin capital letter O with diaeresis
+        Send AddCharacter (&aCharacters)  215 "&times;"       "×"     // multiplication sign
+        Send AddCharacter (&aCharacters)  216 "&Oslash;"      "Ø"     // latin capital letter O with slash
+        Send AddCharacter (&aCharacters)  217 "&Ugrave;"      "Ù"     // latin capital letter U with grave
+        Send AddCharacter (&aCharacters)  218 "&Uacute;"      "Ú"     // latin capital letter U with acute
+        Send AddCharacter (&aCharacters)  219 "&Ucirc;"       "Û"     // latin capital letter U with circumflex
+        Send AddCharacter (&aCharacters)  220 "&Uuml;"        "Ü"     // latin capital letter U with diaeresis
+        Send AddCharacter (&aCharacters)  221 "&Yacute;"      "Ý"     // latin capital letter Y with acute
+        Send AddCharacter (&aCharacters)  222 "&THORN;"       "Þ"     // latin capital letter THORN
+        Send AddCharacter (&aCharacters)  223 "&szlig;"       "ß"     // latin small letter sharp s - ess-zed
+        Send AddCharacter (&aCharacters)  224 "&agrave;"      "à"     // latin small letter a with grave
+        Send AddCharacter (&aCharacters)  225 "&aacute;"      "á"     // latin small letter a with acute
+        Send AddCharacter (&aCharacters)  226 "&acirc;"       "â"     // latin small letter a with circumflex
+        Send AddCharacter (&aCharacters)  227 "&atilde;"      "ã"     // latin small letter a with tilde
+        Send AddCharacter (&aCharacters)  228 "&auml;"        'ä'     // latin small letter a with diaeresis
+        Send AddCharacter (&aCharacters)  229 "&aring;"       "å"     // latin small letter a with ring above
+        Send AddCharacter (&aCharacters)  230 "&aelig;"       "æ"     // latin small letter ae
+        Send AddCharacter (&aCharacters)  231 "&ccedil;"      "ç"     // latin small letter c with cedilla
+        Send AddCharacter (&aCharacters)  232 "&egrave;"      "è"     // latin small letter e with grave
+        Send AddCharacter (&aCharacters)  233 "&eacute;"      "é"     // latin small letter e with acute
+        Send AddCharacter (&aCharacters)  234 "&ecirc;"       "ê"     // latin small letter e with circumflex
+        Send AddCharacter (&aCharacters)  235 "&euml;"        "ë"     // latin small letter e with diaeresis
+        Send AddCharacter (&aCharacters)  236 "&igrave;"      "ì"     // latin small letter i with grave
+        Send AddCharacter (&aCharacters)  237 "&iacute;"      "í"     // latin small letter i with acute
+        Send AddCharacter (&aCharacters)  238 "&icirc;"       "î"     // latin small letter i with circumflex
+        Send AddCharacter (&aCharacters)  239 "&iuml;"        "ï"     // latin small letter i with diaeresis
+        Send AddCharacter (&aCharacters)  240 "&eth;"         "ð"     // latin small letter eth
+        Send AddCharacter (&aCharacters)  241 "&ntilde;"      "ñ"     // latin small letter n with tilde
+        Send AddCharacter (&aCharacters)  242 "&ograve;"      "ò"     // latin small letter o with grave
+        Send AddCharacter (&aCharacters)  243 "&oacute;"      "ó"     // latin small letter o with acute
+        Send AddCharacter (&aCharacters)  244 "&ocirc;"       'ô'     // latin small letter o with circumflex
+        Send AddCharacter (&aCharacters)  245 "&otilde;"      "õ"     // latin small letter o with tilde
+        Send AddCharacter (&aCharacters)  246 "&ouml;"        'ö'     // latin small letter o with diaeresis
+        Send AddCharacter (&aCharacters)  247 "&divide;"      "÷"     // division sign
+        Send AddCharacter (&aCharacters)  248 "&oslash;"      "ø"     // latin small letter o with slash
+        Send AddCharacter (&aCharacters)  249 "&ugrave;"      "ù"     // latin small letter u with grave
+        Send AddCharacter (&aCharacters)  250 "&uacute;"      "ú"     // latin small letter u with acute
+        Send AddCharacter (&aCharacters)  251 "&ucirc;"       "û"     // latin small letter u with circumflex
+        Send AddCharacter (&aCharacters)  252 "&uuml;"        "ü"     // latin small letter u with diaeresis
+        Send AddCharacter (&aCharacters)  253 "&yacute;"      "ý"     // latin small letter y with acute
+        Send AddCharacter (&aCharacters)  254 "&thorn;"       "þ"     // latin small letter thorn
+        Send AddCharacter (&aCharacters)  255 "&yuml;"        "ÿ"     // latin small letter y with diaeresis
+                                                                      //
+        Send AddCharacter (&aCharacters)  338 ""              "OE"    // latin capital letter OE
+        Send AddCharacter (&aCharacters)  339 ""              "oe"    // latin small letter oe
+        Send AddCharacter (&aCharacters)  352 ""              "S"     // latin capital letter S with caron
+        Send AddCharacter (&aCharacters)  353 ""              "s"     // latin small letter s with caron
+        Send AddCharacter (&aCharacters)  376 ""              "Y"     // latin capital letter Y with diaeresis
+        Send AddCharacter (&aCharacters)  402 ""              "Y"     // latin small f with hook - function
+        Send AddCharacter (&aCharacters) 8211 ""              "-"     // en dash
+        Send AddCharacter (&aCharacters) 8212 ""              "-"     // em dash
+        Send AddCharacter (&aCharacters) 8216 ""              "'"     // left single quotation mark
+        Send AddCharacter (&aCharacters) 8217 ""              "'"     // right single quotation mark
+        Send AddCharacter (&aCharacters) 8218 ""              "'"     // single low-9 quotation mark
+        Send AddCharacter (&aCharacters) 8220 ""              '"'     // left double quotation mark
+        Send AddCharacter (&aCharacters) 8221 ""              '"'     // right double quotation mark
+        Send AddCharacter (&aCharacters) 8222 ""              '"'     // double low-9 quotation mark
+        Send AddCharacter (&aCharacters) 8224 ""              "┼"     // dagger
+        Send AddCharacter (&aCharacters) 8225 ""              "╬"    // double dagger
+        Send AddCharacter (&aCharacters) 8226 "&bull;"        "*"     // bullet
+        Send AddCharacter (&aCharacters) 8230 ""              "..."   // horizontal ellipsis
+        Send AddCharacter (&aCharacters) 8240 ""              "o/oo"  // per thousand sign
+        Send AddCharacter (&aCharacters) 8364 "&euro;"        "Euro"  // euro sign
+        Send AddCharacter (&aCharacters) 8482 ""              "tm"    // trade mark sign
+        Set paCharacters to aCharacters
+    End_Procedure
+
+        Function IndexTranslate Integer iHtml Returns Integer
+            Integer iItem
+            tHtmlCharacter sLookForMe
+            Move iHtml to sLookForMe.iNumber
+            Move (BinarySearchArray(sLookForMe,paCharacters(Self),Self,GET_CompareHtmlCharacters)) to iItem
+            Function_Return iItem
+        End_Function
+
+                Function CharNumber2Symbol Integer iHtml Returns String
+                    Integer iItem
+                    tHtmlCharacter[] aCharacters
+
+                    Get IndexTranslate iHtml to iItem
+                    If (iItem<>-1) Begin
+                        Get paCharacters to aCharacters
+                        Function_Return (aCharacters[iItem].sSymbol)
+                    End
+                    Function_Return ("&#"+String(iHtml)+";")
+                End_Function
+
+                Function CharName2Symbol String sName Returns Integer
+                    Integer iItem iMax
+                    tHtmlCharacter[] aCharacters
+                    Get paCharacters to aCharacters
+                    Move (SizeOfArray(aCharacters)) to iMax
+                    Decrement iMax
+                    For iItem from 0 to iMax
+                        If (sName=aCharacters[iItem].sName) ;
+                                Function_Return aCharacters[iItem].sSymbol
+                    Loop
+                    Function_Return sName
+                End_Function
+
+        Function Symbol String sCharId Returns String
+            Integer iHtml
+            String sRval
+            If (mid(sCharId,1,2)="#") Begin
+                Move (mid(sCharId,Length(sCharId)-3,3)) to iHtml
+                Get CharNumber2Symbol iHtml to sRval
+            End
+            Else ;
+                    Get CharName2Symbol sCharId to sRval
+            Function_Return sRval
+        End_Function
+
+    Function HtmlCharacterDecode String sValue Returns String // Expects OEM, returns OEM
+        Integer iLen iPos iSemicolonPos
+        String sChar sRval sCharName
+        Move "" to sRval
+        Move (Length(sValue)) to iLen
+        Move 1 to iPos
+        While (iPos<=iLen)
+            Move (Mid(sValue,1,iPos)) to sChar
+            Increment iPos
+            If (sChar="&") Begin
+                Get SearchPos of oStringFunctions ";" sValue iPos to iSemicolonPos
+                If iSemicolonPos Begin
+                    Move (Mid(sValue,iSemicolonPos-iPos+2,iPos-1)) to sCharName
+                    Get Symbol sCharName to sChar
+                    Move (iSemicolonPos+1) to iPos
+                End
+            End
+            Move (sRval+sChar) to sRval
+        Loop
+
+        Function_Return sRval
+    End_Function
+//
+// *******************
+
+                Procedure AddItemParse1 Integer iType String sValue tHtmlItemParse1[] ByRef aItems
+                    Integer iItem
+                    If (iType<>HIT1_TEXT or sValue<>"") Begin
+                        Move (SizeOfArray(aItems)) to iItem
+                        Move iType to aItems[iItem].iType
+                        Move sValue to aItems[iItem].sValue 
+                    End
+                End_Procedure
+                
+        Procedure Parse1 String sHtml tHtmlItemParse1[] ByRef aItems
+            Integer iPos iLen
+            Boolean bInBrackets bInQuotes
+            String sChar sQuote
+            String sValue
+            
+            Move False to bInBrackets
+            Move False to bInQuotes
+            Move "" to sValue
+            Move "" to sQuote
+            
+            Move (length(sHtml)) to iLen
+            For iPos from 1 to iLen
+                Move (Mid(sHtml,1,iPos)) to sChar
+                If (sChar=Character(9)) ;
+                        Move " " to sChar // Tab
+                If (sChar=Character(10)) ;
+                        Move " " to sChar
+                If (sChar=Character(13)) ;
+                        Move "" to sChar
+                If (sChar="<") Begin
+                    If bInQuotes ;
+                            Move (sValue+sChar) to sValue // If we're in quotes (and consequently in brackets) we ignore the "<"
+                    Else Begin // Doesn't matter if we're in brackets or not. If we meet a second bracket start, we'll consider all up to now normal text.
+                        If (Mid(sHtml,1,iPos+1)=">") Begin // Except if the sign following the "<" is a ">" character. Then we don't take it seriously
+                            Move (sValue+sChar+">") to sValue
+                            Increment iPos // This is so dirty I can't believe I did it!!! 
+                        End
+                        Else Begin
+                            Send AddItemParse1 HIT1_TEXT sValue (&aItems)
+                            Move "<" to sValue
+                            Move True to bInBrackets
+                        End
+                    End
+                End
+                Else If (sChar=">") Begin
+                    Move (sValue+sChar) to sValue
+                    If not bInQuotes Begin
+                        If bInBrackets Begin
+                            Send AddItemParse1 HIT1_ELEM sValue (&aItems)
+                            Move False to bInBrackets
+                            Move "" to sValue
+                        End                    
+                    End
+                End
+                Else If (sChar="'" or sChar='"') Begin // Note: We are only interested in quotes when we are inside an elament declaration
+                    Move (sValue+sChar) to sValue                
+                    If bInBrackets Begin
+                        If bInQuotes Begin
+                            If (sChar=sQuote) ;
+                                    Move False to bInQuotes
+                        End
+                        Else Begin
+                            Move True to bInQuotes
+                            Move sChar to sQuote
+                        End
+                    End
+                End
+                Else Begin
+                    Move (sValue+sChar) to sValue
+                End
+            Loop
+        End_Procedure
+        
+                Procedure AddTextItemParse2 String sValue tHtmlDomElement[] ByRef aItems
+                    Integer iItem
+                    Move (SizeOfArray(aItems)) to iItem
+                    Move HDIT_TEXT to aItems[iItem].iType
+                    Move sValue to aItems[iItem].sValue 
+                End_Procedure
+                
+                                Procedure AddAttribute String sName String sValue tHtmlDomElement[] ByRef aItems
+                                    Integer iItem iAttr
+                                    If (trim(sName)<>"") Begin
+                                        Move (SizeOfArray(aItems)) to iItem
+                                        Decrement iItem
+                                        Move (SizeOfArray(aItems[iItem].aAttributes)) to iAttr
+                                        
+                                        Move (trim(sName)) to sName
+                                        If (left(sName,1)="'" or left(sName,1)='"') Begin // Remove quotes from name
+                                            Move (remove(sName,1,1)) to sName
+                                            Move (rRemove(oStringFunctions,sName,1)) to sName
+                                        End
+                                        
+                                        Move (trim(sValue)) to sValue
+                                        If (left(sValue,1)="'" or left(sValue,1)='"') Begin // Remove quotes from name
+                                            Move (remove(sValue,1,1)) to sValue
+                                            Move (rRemove(oStringFunctions,sValue,1)) to sValue
+                                        End
+                                        
+                                        Move sName to aItems[iItem].aAttributes[iAttr].sName
+                                        Move sValue to aItems[iItem].aAttributes[iAttr].sValue
+                                    End
+                                End_Procedure
+                        
+                        Procedure AddAttributes String sAttributes tHtmlDomElement[] ByRef aItems
+                            // It doesn't handle attribute names without values
+                            Integer iPos iLen
+                            String sChar sQuote sName sValue
+                            Boolean bInQuotes bEqEncounted
+
+                            Move False to bInQuotes
+                            Move False to bEqEncounted
+                            Move "" to sQuote
+                            Move "" to sName
+                            Move "" to sValue
+                            
+                            Move (Length(sAttributes)) to iLen
+                            For iPos from 1 to iLen
+                                Move (mid(sAttributes,1,iPos)) to sChar
+
+                                If bEqEncounted ;
+                                        Move (sValue+sChar) to sValue
+                                Else ;
+                                        Move (sName+sChar) to sName
+                                
+                                If (sChar="'" or sChar='"') Begin
+                                    If bInQuotes Begin
+                                        If (sChar=sQuote) Begin
+                                            Move False to bInQuotes
+                                            Move "" to sQuote
+                                            If bEqEncounted Begin
+                                                Send AddAttribute sName sValue (&aItems)
+                                                Move "" to sName
+                                                Move "" to sValue
+                                                Move False to bEqEncounted
+                                            End
+                                        End
+                                    End
+                                    Else Begin
+                                        Move True to bInQuotes
+                                        Move sChar to sQuote
+                                    End
+                                End
+                                
+                                If (sChar="=") Begin
+                                    If (right(sName,1)="=") ;
+                                            Move (rRemove(oStringFunctions,sName,1)) to sName // Remove the = sign.
+                                    If not bInQuotes ;
+                                            Move True to bEqEncounted
+                                End
+                                
+                                If (sChar=" ") Begin
+                                    If not bInQuotes Begin
+                                        If bEqEncounted Begin // End of name/value set with no quotes on value (illegal)
+                                            Send AddAttribute sName sValue (&aItems)
+                                            Move "" to sName
+                                            Move "" to sValue
+                                            Move False to bEqEncounted
+                                        End
+                                    End
+                                End
+                                
+                            Loop
+                        End_Procedure
+                
+                Procedure AddElementItemParse2 String sValue tHtmlDomElement[] ByRef aItems
+                    Integer iItem
+                    Boolean bAddClosingTag
+                    String[] aValues
+                    String sElemName
+                    Move (SizeOfArray(aItems)) to iItem
+                    Move (remove(sValue,1,1)) to sValue // Strip < and > characters
+                    Move (rRemove(oStringFunctions,sValue,1)) to sValue
+                    Send SplitString of oStringFunctions sValue " " True True (&aValues)
+                    Move aValues[0] to sElemName // Hertil <-- Somethings wrong
+                    If (left(sElemName,1)="/") Begin // It's a closing tag
+                        Move HDIT_ELEM_CLOSE to aItems[iItem].iType
+                        Move (remove(sElemName,1,1)) to aItems[iItem].sValue // Get rid of "/" and add to array
+                    End
+                    Else Begin
+                        Move (trim(replace(sElemName,sValue,""))) to sValue // Now we're left with the attributes and possibly a closing /
+                        Move (right(sValue,1)="/") to bAddClosingTag
+                        If bAddClosingTag ;
+                                Move (rRemove(oStringFunctions,sValue,1)) to sValue // Get rid of / if self-closing tag
+                                                
+                        Move HDIT_ELEM_OPEN to aItems[iItem].iType
+                        Move sElemName to aItems[iItem].sValue
+                        Send AddAttributes sValue (&aItems)
+    
+                        If bAddClosingTag Begin
+                            Move HDIT_ELEM_CLOSE to aItems[iItem+1].iType
+                            Move sElemName to aItems[iItem+1].sValue // Get rid of "/" and add to array
+                        End
+                    End
+                End_Procedure
+    
+        Procedure Parse2 tHtmlItemParse1[] ByRef aItemsParse1 tHtmlDomElement[] ByRef aElements
+            Integer iItm iMax iType
+            String sValue
+            Move (SizeOfArray(aItemsParse1)) to iMax
+            Decrement iMax
+            For iItm from 0 to iMax
+                Move aItemsParse1[iItm].iType to iType
+                Move aItemsParse1[iItm].sValue to sValue
+                If (iType=HIT1_TEXT) ;
+                        Send AddTextItemParse2 sValue (&aElements)
+                If (iType=HIT1_ELEM) ;
+                        Send AddElementItemParse2 sValue (&aElements)
+            Loop
+        End_Procedure
+        
+        // Procedure AddLineFeed adds a (double) line feed, if not already present.
+        Procedure AddLineFeed String ByRef sValue String sLf Boolean bDouble
+            If bDouble Begin
+                If not (EndsWith(oStringFunctions,sValue,sLf+sLf)) ;
+                        Move (sValue+sLf) to sValue
+                If not (EndsWith(oStringFunctions,sValue,sLf+sLf)) ;
+                        Move (sValue+sLf) to sValue
+            End
+            Else Begin
+                If not (EndsWith(oStringFunctions,sValue,sLf)) ;
+                        Move (sValue+sLf) to sValue
+            End
+        End_Procedure
+
+                Function AttributeValue tHtmlDomElementAttr[] aAttributes String sName Returns String
+                    Integer iMax iItm
+                    Move (SizeOfArray(aAttributes)) to iMax
+                    Decrement iMax
+                    Move (lowercase(sName)) to sName
+                    For iItm from 0 to iMax
+                        If (sName=lowercase(aAttributes[iItm].sName)) ;
+                                Function_Return aAttributes[iItm].sValue
+                    Loop
+                    Function_Return ""
+                End_Function
+
+                Procedure AddLinkToArray tHtmlDocumentLink[] ByRef aLinks String sNewLink
+                    Integer iMax iItm
+                    Move (SizeOfArray(aLinks)) to iMax
+                    Decrement iMax
+                    For iItm from 0 to iMax
+                        If (aLinks[iItm].sUrl=sNewLink) ;
+                                Procedure_Return // We already have it
+                    Loop
+                    Move sNewLink to aLinks[iMax+1].sUrl
+                End_Procedure
+        
+        Procedure Parse3 tHtmlDomElement[] ByRef aElements String ByRef sTextValue tHtmlDocumentLink[] ByRef aLinks String ByRef sTitle Integer iInitialLocatorValue
+            Integer iItm iMax iType
+            Integer iLocator // 0 outside, 1=inside header, 2=inside body
+            String sValue sLf sLink
+        
+            Move iInitialLocatorValue to iLocator
+            Move (character(13)+character(10)) to sLf
+            Move (SizeOfArray(aElements)) to iMax
+            Decrement iMax
+            For iItm from 0 to iMax
+                Move aElements[iItm].iType to iType
+                Move aElements[iItm].sValue to sValue
+                If (iType=HDIT_ELEM_OPEN)  Begin
+                    Move (lowercase(sValue)) to sValue
+                    If (sValue="br")  ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="p")   ;
+                            Send AddLineFeed (&sTextValue) sLf True
+                    If (sValue="div") ;
+                            Send AddLineFeed (&sTextValue) sLf True
+                    If (sValue="head" and iLocator=0) ;
+                            Move 1 to iLocator
+                    If (sValue="body" and iLocator=0) ;
+                            Move 2 to iLocator
+                    If (sValue="h1") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h2") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h3") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h4") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h5") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h6") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="td") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="li") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (iLocator=1 and sValue="title") Begin
+                        Move aElements[iItm+1].sValue to sTitle
+                        Get HtmlCharacterDecode sTitle to sTitle
+                    End
+                    If (iLocator=2 and sValue="a") Begin
+                        Get AttributeValue aElements[iItm].aAttributes "href" to sLink
+                        Send AddLinkToArray (&aLinks) sLink
+                    End
+                End
+                If (iType=HDIT_ELEM_CLOSE) Begin
+                    Move (lowercase(sValue)) to sValue
+                    If (sValue="p") ;
+                            Send AddLineFeed (&sTextValue) sLf True
+                    If (sValue="head" and iLocator=1) ;
+                            Move 0 to iLocator
+                    If (sValue="body" and iLocator=2) ;
+                            Move 0 to iLocator
+                    If (sValue="h1") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h2") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h3") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h4") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h5") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="h6") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="td") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                    If (sValue="li") ;
+                            Send AddLineFeed (&sTextValue) sLf False
+                End
+                If (iType=HDIT_TEXT) Begin
+                    If (iLocator=2) Begin
+                        Get HtmlCharacterDecode sValue to sValue
+                        Move sValue to aElements[iItm].sValue
+                        If (EndsWith(oStringFunctions,sTextValue,sLf)) ;
+                                Move (sTextValue+sValue) to sTextValue
+                        Else ;
+                                Move (sTextValue*sValue) to sTextValue
+                    End
+                End
+            Loop
+        End_Procedure
+
+            // This function returns the number of un-assigned node ids
+            Function CountNullIds tHtmlDomElement[] aElements Returns Integer
+                Integer iMax iItm iCount iType
+
+                Move 0 to iCount
+
+                Move (SizeOfArray(aElements)) to iMax
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move aElements[iItm].iType to iType
+                    If ((iType=HDIT_ELEM_OPEN or iType=HDIT_ELEM_CLOSE) and aElements[iItm].iNodeId=0) ;
+                            Increment iCount
+                Loop
+                Function_Return iCount
+            End_Function
+
+            Procedure AssignNodeIdsToImmediateNeighbours tHtmlDomElement[] ByRef aElements Integer ByRef iNextNode
+                Integer iChannel iMax iItm iType
+                Integer iMostRecentlyOpenItem
+               
+                String sName sMostRecentlyOpenName
+                Boolean bHit
+
+                Move (SizeOfArray(aElements)) to iMax
+                Decrement iMax
+                
+                Repeat
+                    Move False to bHit
+                    For iItm from 0 to iMax
+                        If (aElements[iItm].iNodeId=0) Begin
+                            Move aElements[iItm].iType to iType
+                            Move aElements[iItm].sValue to sName
+                            If (iType=HDIT_ELEM_OPEN)  Begin
+                                Move sName to sMostRecentlyOpenName
+                                Move iItm to iMostRecentlyOpenItem
+                            End
+                            If (iType=HDIT_ELEM_CLOSE) Begin
+                                If (Uppercase(sName)=Uppercase(sMostRecentlyOpenName)) Begin
+                                    Move True to bHit
+                                    Move iNextNode to aElements[iItm].iNodeId
+                                    Move iNextNode to aElements[iMostRecentlyOpenItem].iNodeId
+                                    Increment iNextNode
+                                End
+                                Move "" to sMostRecentlyOpenName
+                                Move -1 to iMostRecentlyOpenItem
+                            End
+                        End
+                    Loop
+                Until (not(bHit))
+            End_Procedure
+
+Struct _tTagCount
+    String sTag
+    Integer iOpen
+    Integer iClose
+End_Struct
+            
+                    Procedure BuildTagCountArrayIncrement _tTagCount[] ByRef aTags String sTagName Integer iAmount
+                        Integer iMax iItm
+                        Move (SizeOfArray(aTags)) to iMax
+                        Decrement iMax
+                        For iItm from 0 to iMax
+                            If (sTagName=aTags[iItm].sTag) Begin
+                                If (iAmount>0) ;
+                                        Move (aTags[iItm].iOpen+iAmount) to aTags[iItm].iOpen
+                                Else ;
+                                        Move (aTags[iItm].iClose-iAmount) to aTags[iItm].iClose
+                                Procedure_Return
+                            End
+                        Loop
+                        
+                        Move (SizeOfArray(aTags)) to iItm
+                        Move sTagName to aTags[iItm].sTag
+                        If (iAmount>0) ;
+                                Move iAmount to aTags[iItm].iOpen
+                        Else ;
+                                Move (0-iAmount) to aTags[iItm].iClose
+                    End_Procedure
+
+            Function BuildTagCountArray tHtmlDomElement[] aElements Returns _tTagCount[]
+                Integer iMax iItm iType
+                _tTagCount[] aTags
+                String sTagName
+
+                Move (SizeOfArray(aElements)) to iMax
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move aElements[iItm].iType to iType
+                    If ((iType=HDIT_ELEM_OPEN or iType=HDIT_ELEM_CLOSE) and aElements[iItm].iNodeId=0) Begin
+                        Move aElements[iItm].sValue to sTagName
+                        Move (Uppercase(sTagName)) to sTagName
+                        If (iType=HDIT_ELEM_OPEN) ;
+                                Send BuildTagCountArrayIncrement (&aTags) sTagName 1
+                        If (iType=HDIT_ELEM_CLOSE) ;
+                                Send BuildTagCountArrayIncrement (&aTags) sTagName -1
+                    End
+                Loop
+                Function_Return aTags
+            End_Function
+            
+                            Procedure AutoAssignNodesWithoutClosingTags_Tag tHtmlDomElement[] ByRef aElements Integer ByRef iNextNode String sTagName
+                                Integer iItm iMax iType
+                                Move (SizeOfArray(aElements)) to iMax
+                                Decrement iMax
+                                For iItm from 0 to iMax
+                                    If (aElements[iItm].iNodeId=0) Begin
+                                        Move aElements[iItm].iType to iType
+                                        If (iType=HDIT_ELEM_OPEN) Begin
+                                            If (sTagName=uppercase(aElements[iItm].sValue)) Begin
+                                                Move HDIT_SELFCLOSED to aElements[iItm].iType
+                                                Move iNextNode to aElements[iItm].iNodeId
+                                                Increment iNextNode
+                                            End
+                                        End
+                                    End
+                                Loop
+                                
+                            End_Procedure
+
+            Procedure AutoAssignNodesWithoutClosingTags tHtmlDomElement[] ByRef aElements Integer ByRef iNextNode
+                Integer iMax iItm
+                _tTagCount[] aTags
+                Get BuildTagCountArray aElements to aTags
+                Move (SizeOfArray(aTags)) to iMax
+                Decrement iMax
+                For iItm from 0 to iMax
+                    If (aTags[iItm].iClose=0) ;
+                            Send AutoAssignNodesWithoutClosingTags_Tag (&aElements) (&iNextNode) aTags[iItm].sTag
+                Loop
+            End_Procedure
+            
+            Procedure KillFirstIllegalClosingTag tHtmlDomElement[] ByRef aElements
+                Integer iMax iItm iType
+                Move (SizeOfArray(aElements)) to iMax
+                Decrement iMax
+                For iItm from 0 to iMax
+                    Move aElements[iItm].iType to iType
+                    If (iType=HDIT_ELEM_CLOSE and aElements[iItm].iNodeId=0) Begin
+                        Move HDIT_ILLEGAL_CLOSING_TAG to aElements[iItm].iType
+                        Procedure_Return
+                    End
+                Loop
+                //Send info_box "Can't happen! (HtmlScraperClass.pkg)"
+            End_Procedure
+
+        Procedure AssignNodeIds tHtmlDomElement[] ByRef aElements
+            Integer iChannel iMax iItm iNextNode iNullCount iPrevNullCount
+            Move 1 to iNextNode
+            Move 99999999 to iNullCount
+
+            Repeat
+                Repeat // All what happens within this repeat-loop is strictly analytical (no guesswork)
+                    Send AssignNodeIdsToImmediateNeighbours (&aElements) (&iNextNode)
+                    Send AutoAssignNodesWithoutClosingTags (&aElements) (&iNextNode)
+                    Move iNullCount to iPrevNullCount
+                    Get CountNullIds aElements to iNullCount
+                Until (iNullCount=iPrevNullCount)
+                If (iNullCount>0) Begin
+                    // At this point we will have to make a guess as to which closing-tag
+                    // to ignore.
+                    Send KillFirstIllegalClosingTag (&aElements)
+                End
+            Until (iNullCount=0)
+        End_Procedure
+        
+                Function WriteDocumentAttributeString tHtmlDomElementAttr[] aAttributes Returns String
+                    Integer iMax iItm
+                    String sValue sQuote
+                    String sRval
+                    Move (SizeOfArray(aAttributes)) to iMax
+                    Decrement iMax
+                    
+                    If (iMax>=0) Begin
+                        For iItm from 0 to iMax
+                            Move aAttributes[iItm].sValue to sValue
+                            Move (sRval*aAttributes[iItm].sName) to sRval
+                            If (sValue contains '"') ;
+                                    Move "'" to sQuote
+                            Else ;
+                                    Move '"' to sQuote
+                            Move (sRval+"="+sQuote+sValue+sQuote) to sRval
+                        Loop
+                        If (Left(sRval,1)<>" ") ;
+                                Move (" "+sRval) to sRval
+                    End
+                    Else ;
+                            Move "" to sRval
+                    Function_Return sRval
+                End_Function
+                
+    Enum_List // Write Document Modes (parameter for WriteDocument procedure)
+        Define WDM_PARSE_INFO
+        Define WDM_NO_CONTENT // Just a lineout of the tag-nesting
+        Define WDM_XHTML
+    End_Enum_List
+    
+    Procedure WriteDocument tHtmlDocument stDoc Integer iMode String sPath
+        Integer iNode iMax iItm iType iChannel
+        String sName sLeadIn sAttributes
+        Boolean bParseInfo bContent
+        tHtmlDomElement[] aElements
+        
+        Move stDoc.aElements to aElements
+        
+        Move (iMode<>WDM_XHTML) to bParseInfo
+        Move (iMode<>WDM_NO_CONTENT) to bContent
+        
+        Move (SizeOfArray(aElements)) to iMax
+        Decrement iMax
+        Get DirectOutput of oFileFunctions sPath to iChannel
+        Move "" to sLeadIn
+        For iItm from 0 to iMax
+            Move aElements[iItm].iType to iType
+            Move aElements[iItm].sValue to sName
+            Move aElements[iItm].iNodeId to iNode
+            Get WriteDocumentAttributeString aElements[iItm].aAttributes to sAttributes
+            If (iType=HDIT_ELEM_OPEN) Begin
+                Write channel iChannel sLeadIn ("<"+sName+sAttributes+">")
+                If bParseInfo ;
+                        Writeln (" Node-id:"+String(iNode))
+                Else ;
+                        Writeln ""
+                Move (sLeadIn+"    ") to sLeadIn
+            End
+            If (iType=HDIT_ELEM_CLOSE) Begin
+                Move (Remove(sLeadIn,1,4)) to sLeadIn
+                Write channel iChannel sLeadIn ("</"+sName+">")
+                If bParseInfo ;
+                        Writeln (" Node-id:"+String(iNode))
+                Else ;
+                        Writeln ""
+            End
+            If (iType=HDIT_SELFCLOSED) Begin
+                Write channel iChannel sLeadIn ("<"+sName+sAttributes+"/>")
+                If bParseInfo ;
+                        Writeln (" (Auto-closed by parser) Node-id:"+String(iNode))
+                Else ;
+                        Writeln ""
+            End
+            If (iType=HDIT_ILLEGAL_CLOSING_TAG) Begin
+                Write channel iChannel sLeadIn
+                If bParseInfo ;
+                        Writeln ("("+sName+") (Stray closing tag - ignored by parser)") (" Node-id:"+String(iNode))
+            End
+            If (iType=HDIT_TEXT) Begin
+                If bContent Begin
+                    Writeln channel iChannel sLeadIn sName
+                End
+            End
+        Loop
+            
+        Send CloseOutput of oFileFunctions iChannel
+    End_Procedure
+
+    Function ParseDocument String sDocument Returns tHtmlDocument
+        tHtmlDocument stDoc
+        tHtmlItemParse1[] aItemsParse1
+        tHtmlDomElement[] aElements
+        Send Parse1 sDocument (&aItemsParse1)
+        Send Parse2 (&aItemsParse1) (&aElements)
+        Send AssignNodeIds (&aElements)
+        Send Parse3 (&aElements) (&stDoc.sTextValue) (&stDoc.aLinks) (&stDoc.sTitle) 0
+        Move aElements to stDoc.aElements
+        Function_Return stDoc 
+    End_Function
+    
+    Function ParseDocumentFromFile String sPath Returns tHtmlDocument
+        tHtmlDocument sDoc
+        String sFileContent
+        Get FileAsString of oFileFunctions sPath to sFileContent
+        Get ParseDocument sFileContent to sDoc
+        Function_Return sDoc
+    End_Function
+    
+    Function StripHtml String sHtmlSnippet Returns String 
+//        tHtmlDocument sDoc
+//        tHtmlItemParse1[] aItemsParse1
+//        tHtmlDomElement[] aElements
+//
+//        Send Parse1 sHtmlSnippet (&aItemsParse1)
+//        Send Parse2 (&aItemsParse1) (&aElements)
+//        Send AssignNodeIds (&aElements)
+//        Send Parse3 (&aElements) (&sDoc.sTextValue) (&sDoc.aLinks) (&sDoc.sTitle) 2
+//        Move aElements to sDoc.aElements
+//        Function_Return sDoc.sTextValue
+    End_Function
+End_Class
+
+Global_Variable Integer oHtmlParserFunctions
+
+Object _oHtmlParserFunctions is a cHtmlParserFunctions // Was named: HtmlParserObj
+    Move Self to oHtmlParserFunctions
+End_Object

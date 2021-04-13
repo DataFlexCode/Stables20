@@ -1,0 +1,178 @@
+Use AttributeFunctions.pkg
+Use Compare.pkg
+
+Struct tFilelistCompareCursor
+    Integer[] aIndices
+    String    sCursorLabel
+    Integer   iType //
+End_Struct
+
+Class _cCompareColumnDefinitions is a cItemCompare
+
+    Function CompareItems Integer iItem1 Integer iItem2 Returns Boolean
+        String sName1 sName2
+        tFieldAttributes stField1
+        tFieldAttributes stField2
+        Get VariantValue1 iItem1 to stField1
+        Get VariantValue2 iItem2 to stField2
+        Get _AttributeValue of oAttributeFunctions stField1.aFieldAttributes DF_FIELD_NAME to sName1
+        Get _AttributeValue of oAttributeFunctions stField2.aFieldAttributes DF_FIELD_NAME to sName2
+        Function_Return (Lowercase(sName1)=Lowercase(sName2))
+    End_Function
+
+    //> This is sent when items are found to be identical. Should be augmented.
+    Procedure OnItemsMatched Integer iItem1 Integer iItem2
+        tFieldAttributes stField1
+        tFieldAttributes stField2
+        Get VariantValue1 iItem1 to stField1
+        Get VariantValue2 iItem2 to stField2
+        Delegate Send CompareColumns stField1 stField2
+    End_Procedure
+
+    //> This is sent when an item cannot be matched.
+    //> Means iItem on the left side couldn't be matched. The info parameter
+    //> gives a little extra information.
+    //>    -2: The item is missing in the end of the sequence
+    //>    -1: Sync limit exceeded. Missing somewhere in the middle of things.
+    //>   >=0: Missing from the right side at position iInfo
+    //> Should be augmented.
+    Procedure OnItemNotMatched1 Integer iItem Integer iInfo
+        tFieldAttributes stColumn
+        Get VariantValue1 iItem to stColumn
+        Delegate Send OnColumnOnlyIn1 stColumn
+    End_Procedure
+
+    //> This is sent when an item cannot be matched
+    //> Means iItem on the right side couldn't be matched. The info parameter
+    //> gives a little extra information.
+    //>    -2: The item is missing in the end of the sequence
+    //>    -1: Sync limit exceeded. Missing somewhere in the middle of things.
+    //>   >=0: Missing from the left side at position iInfo
+    //> Should be augmented.
+    Procedure OnItemNotMatched2 Integer iItem Integer iInfo
+        tFieldAttributes stColumn
+        Get VariantValue2 iItem to stColumn
+        Delegate Send OnColumnOnlyIn2 stColumn
+    End_Procedure
+
+End_Class
+
+Struct tAttrCompareResult
+    Integer iAttr
+    Boolean bValueIsNull1
+    String sValue1
+    Boolean bValueIsNull2
+    String sValue2
+End_Struct
+
+Struct tColumnCompareResult
+    String sColumnName
+    tAttrCompareResult[] aColumnAttrCompare
+End_Struct
+
+Struct tIndexSegmentCompareResult
+    String sColumnName
+    tAttrCompareResult[] aSegmentAttrCompare
+End_Struct
+
+Struct tIndexCompareResult
+    Integer iIndexNumber
+    tAttrCompareResult[] aIndexAttrCompare
+    tIndexSegmentCompareResult[] aSegmentResults
+End_Struct
+
+Struct tTableCompareResult
+    tAttrCompareResult[] aTableAttrCompare
+    tColumnCompareResult[] aColumnResults // index in the array is not eq to column number! identify with sColumnName
+    tIndexCompareResult[] aIndexResults // // index in the array is not eq to index number! Identify by iIndexNumber
+End_Struct
+
+Class cCompareTableDefinitions is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Object _ColumnsCompare is a _cCompareColumnDefinitions
+        End_Object
+
+    End_Procedure
+
+    Procedure OnColumnOnlyIn1 tFieldAttributes stColumn
+    End_Procedure
+    Procedure OnColumnOnlyIn2 tFieldAttributes stColumn
+    End_Procedure
+    Procedure OnColumnChanged tFieldAttributes stColumn1 tFieldAttributes stColumn2
+    End_Procedure
+
+    Procedure OnAttrOnlyIn1 Integer iAttrType Integer iAttr String sValue String sSymbolicValue
+
+    End_Procedure
+
+    Procedure OnAttrOnlyIn2 Integer iAttrType Integer iAttr String sValue String sSymbolicValue
+    End_Procedure
+
+    Procedure OnAttrChanged Integer iAttrType Integer iAttr String sValue String sSymbolicValue
+    End_Procedure
+
+    Procedure OnAttrUnchanged Integer iAttrType Integer iAttr String sValue String sSymbolicValue
+    End_Procedure
+
+    // Returns true if identical
+    Function _CompareAttributes Integer iAttrType tAttributeValue[] aValues1 tAttributeValue[] aValues2 Returns Boolean
+        Boolean bIdentical
+        Integer iMax iItem iMax1 iMax2 iAttr
+        String sValue1 sValue2 sDisplay1 sDisplay2
+        Integer[] aTableAttributes
+
+        Move True to bIdentical
+
+        Move gaAttributesByType[iAttrType] to aTableAttributes
+        Move (SizeOfArray(aTableAttributes)-1) to iMax
+        Move (SizeOfArray(aValues1)-1) to iMax1
+        Move (SizeOfArray(aValues2)-1) to iMax2
+        For iItem from 0 to iMax
+            Move aTableAttributes[iItem] to iAttr
+            If (iItem<=iMax1) Begin
+                Get _AttributeValue of oAttributeFunctions aValues1 iAttr to sValue1
+                Get AttributeSymbolicValue of oAttributeFunctions iAttr sValue1 to sDisplay1
+            End
+            If (iItem<=iMax2) Begin
+                Get _AttributeValue of oAttributeFunctions aValues2 iAttr to sValue2
+                Get AttributeSymbolicValue of oAttributeFunctions iAttr sValue2 to sDisplay2
+            End
+
+            If (iItem<=iMax1 and iItem<=iMax2) Begin // If they are both there
+                If (sValue1=sValue2) Begin
+                    Send OnAttrUnchanged iAttrType iAttr sValue1 sDisplay1
+                End
+                Else Begin
+                    Send OnAttrChanged iAttrType iAttr sValue1 sDisplay1 sValue2 sDisplay2
+                    Move False to bIdentical
+                End
+            End
+            Else If (iItem<=iMax1 and iItem>iMax2) Begin
+                Send OnAttrOnlyIn1 iAttrType iAttr sValue1 sDisplay1
+                Move False to bIdentical
+            End
+            Else If (iItem>iMax1 and iItem<=iMax2) Begin
+                Send OnAttrOnlyIn2 iAttrType iAttr sValue2 sDisplay2
+                Move False to bIdentical
+            End
+        Loop
+        Function_Return bIdentical
+    End_Function
+
+    Procedure CompareColumns tFieldAttributes stField1 tFieldAttributes stField2
+        Boolean bIdentical
+        Integer iItem iMax
+        Move True to bIdentical
+        Get _CompareAttributes ATYPE_Field stField1.aFieldAttributes stField2.aFieldAttributes to bIdentical
+    End_Procedure
+
+    // Returns true if identical
+    Procedure CompareTables tTableAttributes stTable1 tTableAttributes stTable2
+        Boolean bIdentical
+        Integer iItem iMax
+        Move True to bIdentical
+        Get _CompareAttributes ATYPE_FILE stTable1.aTableAttributes stTable2.aTableAttributes to bIdentical        
+        Send RunCompareArrays of (_ColumnsCompare(Self)) stTable1.aFields stTable2.aFields True 0
+    End_Procedure
+End_Class

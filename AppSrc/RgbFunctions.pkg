@@ -1,0 +1,431 @@
+//> This package contains functions to manipulate RGB colors.
+//> The RGB color model is an additive color model in which red, green, and blue light are combined in various ways
+//> to create other colors. The very idea for the model itself and the abbreviation "RGB" come from the three primary
+//> colors in additive light models (http://www.wordiq.com/definition/RGB).
+//> pkg.doc.end
+
+Use VdfBase.pkg // DAW package. Provides low level support expected of all DF applications (windows and web)
+
+Use StringFunctions.pkg // Define oStringFunctions object
+
+Struct tHtmlColorName
+    String sName
+    String sHtmlColor
+End_Struct
+
+Struct tColorStrategyColor
+    String sLabel
+    Integer iColor
+End_Struct
+
+Global_Variable tHtmlColorName[] _gaHtmlColorNames
+
+//> These are the leagal values to pass to the CoolColor function.
+Enum_List
+    Define C$CoolColorIdxDarkPaleRed
+    Define C$CoolColorIdxDarkPaleGreen
+    Define C$CoolColorIdxDarkPaleBlue
+    Define C$CoolColorIdxBrightTurquoise
+    Define C$CoolColorIdxDarkBrown
+    Define C$CoolColorIdxWarmGray
+    Define C$CoolColorIdxColdGray
+    Define C$CoolColorIdxLightRed
+    Define C$CoolColorIdxLightBlue
+    Define C$CoolColorIdxLightGreen
+    Define C$CoolColorIdxLightYellow
+End_Enum_List
+
+Global_Variable Integer[] _gaColors
+
+//> This is the class of global object oRgbFunctions
+Class cRgbFunctions is a cObject
+    Procedure Construct_Object
+        Integer[] aColors
+        Forward Send Construct_Object
+        Property Integer[] paBrightColors
+        Get Brighten clRed 80      to aColors[0]
+        Get Brighten clGreen 80    to aColors[1]
+        Get Brighten clBlue 80     to aColors[2]
+        Get Brighten clYellow 80   to aColors[3]
+        Get Brighten clGray 80     to aColors[4]
+        Set paBrightColors         to aColors
+        Get Compose 40 50 72       to _gaColors[C$CoolColorIdxDarkPaleBlue]
+        Get Compose 67 80 61       to _gaColors[C$CoolColorIdxDarkPaleGreen]
+        Get Compose 213 232 174    to _gaColors[C$CoolColorIdxBrightTurquoise]
+        Get Compose 80 48 35       to _gaColors[C$CoolColorIdxDarkBrown]
+        Get Compose 160 150 122    to _gaColors[C$CoolColorIdxWarmGray]
+        Get Compose 153 156 146    to _gaColors[C$CoolColorIdxColdGray]
+        Get Compose 112 22 42      to _gaColors[C$CoolColorIdxDarkPaleRed]
+        Get Brighten clRed 80      to _gaColors[C$CoolColorIdxLightRed]
+        Get Brighten clBlue 80     to _gaColors[C$CoolColorIdxLightBlue]
+        Get Brighten clGreen 80    to _gaColors[C$CoolColorIdxLightGreen]
+        Get Brighten clYellow 80   to _gaColors[C$CoolColorIdxLightYellow]
+    End_Procedure
+
+    Function _CoolColorName Integer iIndex Returns String
+        If  (iIndex=C$CoolColorIdxDarkPaleBlue)  Begin
+            Function_Return "C$CoolColorIdxDarkPaleBlue"
+        End
+        Else If (iIndex=C$CoolColorIdxDarkPaleGreen)  Begin
+            Function_Return "C$CoolColorIdxDarkPaleGreen"
+        End
+        Else If (iIndex=C$CoolColorIdxBrightTurquoise)  Begin
+            Function_Return "C$CoolColorIdxBrightTurquoise"
+        End
+        Else If (iIndex=C$CoolColorIdxDarkBrown)  Begin
+            Function_Return "C$CoolColorIdxDarkBrown"
+        End
+        Else If (iIndex=C$CoolColorIdxWarmGray)  Begin
+            Function_Return "C$CoolColorIdxWarmGray"
+        End
+        Else If (iIndex=C$CoolColorIdxColdGray)  Begin
+            Function_Return "C$CoolColorIdxColdGray"
+        End
+        Else If (iIndex=C$CoolColorIdxDarkPaleRed)  Begin
+            Function_Return "C$CoolColorIdxDarkPaleRed"
+        End
+        Else If (iIndex=C$CoolColorIdxLightRed)  Begin
+            Function_Return "C$CoolColorIdxLightRed"
+        End
+        Else If (iIndex=C$CoolColorIdxLightBlue)  Begin
+            Function_Return "C$CoolColorIdxLightBlue"
+        End
+        Else If (iIndex=C$CoolColorIdxLightGreen)  Begin
+            Function_Return "C$CoolColorIdxLightGreen"
+        End
+        Else If (iIndex=C$CoolColorIdxLightYellow)  Begin
+            Function_Return "C$CoolColorIdxLightYellow"
+        End
+        Function_Return "Unknown color name"
+    End_Function
+
+    Procedure _ShowCoolColorCompositions
+        Integer iColor iRed iGreen iBlue iMax iItem
+        If (IsDebuggerPresent()) Begin
+            Move (SizeOfArray(_gaColors)-1) to iMax
+            For iItem from 0 to iMax
+                Get CoolColor iItem to iColor
+                Send Decompose iColor (&iRed) (&iGreen) (&iBlue)
+                Show (_CoolColorName(Self,iItem)+":     ")
+                Showln (String(iRed)+","+String(iGreen)+","+String(iBlue))
+            Loop
+        End
+    End_Procedure
+
+
+    Function BrightColor Integer iColor Returns Integer
+        Integer[] aColors
+        get paBrightColors to aColors
+        If (iColor=clRed) Begin
+             Function_Return aColors[0]
+        End
+        If (iColor=clGreen) Begin
+             Function_Return aColors[1]
+        End
+        If (iColor=clBlue) Begin
+             Function_Return aColors[2]
+        End
+        If (iColor=clYellow) Begin
+             Function_Return aColors[3]
+        End
+        If (iColor=clGray) Begin
+             Function_Return aColors[4]
+        End
+    End_Function
+
+    //> Return a RGB color composed from red, green and blue components (each of a value between 0 and 255)
+    Function Compose Integer iRed Integer iGreen Integer iBlue Returns Integer
+        Function_Return (iBlue*256+iGreen*256+iRed)
+    End_Function
+
+    Procedure Decompose Integer iColor Integer ByRef iRed Integer ByRef iGreen Integer ByRef iBlue
+        Move (iColor iand $0000FF) to iRed
+        Move (iColor iand $00FF00/256) to iGreen
+        Move (iColor iand $FF0000/65536) to iBlue
+    End_Procedure
+
+    //> Brighten a RGB color by a percentage.
+    Function Brighten Integer iColor Integer iPercent Returns Integer
+        Integer iRed iGreen iBlue
+        Move (iColor iand $0000FF) to iRed
+        Move (iColor iand $00FF00/256) to iGreen
+        Move (iColor iand $FF0000/65536) to iBlue
+        Move (255-iRed*iPercent/100+iRed) to iRed
+        Move (255-iGreen*iPercent/100+iGreen) to iGreen
+        Move (255-iBlue*iPercent/100+iBlue) to iBlue
+        Function_Return (iBlue*256+iGreen*256+iRed)
+    End_Function
+    
+    //> Darken a RGB color by a percentage.
+    Function Darken Integer iColor Integer iPercent Returns Integer
+        Integer iRed iGreen iBlue
+        Move (iColor iand $0000FF) to iRed
+        Move (iColor iand $00FF00/256) to iGreen
+        Move (iColor iand $FF0000/65536) to iBlue
+        Move (-iRed*iPercent/100+iRed) to iRed
+        Move (-iGreen*iPercent/100+iGreen) to iGreen
+        Move (-iBlue*iPercent/100+iBlue) to iBlue
+        Function_Return (iBlue*256+iGreen*256+iRed)
+    End_Function
+
+    //> Blend two RGB colors weighing color1 by a percentage.
+    Function Blend Integer iColor1 Integer iColor2 Integer iPercent1 Returns Integer
+        Integer iRed1 iGreen1 iBlue1
+        Integer iRed2 iGreen2 iBlue2
+        Move (iColor1 iand $0000FF) to iRed1
+        Move (iColor1 iand $00FF00/256) to iGreen1
+        Move (iColor1 iand $FF0000/65536) to iBlue1
+        Move (iColor2 iand $0000FF) to iRed2
+        Move (iColor2 iand $00FF00/256) to iGreen2
+        Move (iColor2 iand $FF0000/65536) to iBlue2
+        Move (iRed1*iPercent1+(100-iPercent1*iRed2)/100) to iRed1
+        Move (iGreen1*iPercent1+(100-iPercent1*iGreen2)/100) to iGreen1
+        Move (iBlue1*iPercent1+(100-iPercent1*iBlue2)/100) to iBlue1
+        Function_Return (iBlue1*256+iGreen1*256+iRed1)
+    End_Function
+
+    //> Negate a RGB color
+    Function Negate Integer iColor Returns Integer
+        Integer iRed iGreen iBlue
+        Move (iColor iand $0000FF) to iRed
+        Move (iColor iand $00FF00/256) to iGreen
+        Move (iColor iand $FF0000/65536) to iBlue
+        Move (255-iRed) to iRed
+        Move (255-iGreen) to iGreen
+        Move (255-iBlue) to iBlue
+        Function_Return (iBlue*256+iGreen*256+iRed)
+    End_Function
+
+    //> Translate a RGB color to HTML syntax. (used to be called ToHtml)
+    Function RgbToHTML Integer iColor Returns String
+        Integer iRed iGreen iBlue
+        Move (iColor iand $0000FF) to iRed
+        Move (iColor iand $00FF00/256) to iGreen
+        Move (iColor iand $FF0000/65536) to iBlue
+        Function_Return ("#"+ByteToHex(oStringFunctions,iRed)+ByteToHex(oStringFunctions,iGreen)+ByteToHex(oStringFunctions,iBlue))
+    End_Function
+
+    Function HtmlCssColorNameToHTML String sColorName Returns String
+        Integer iMax iItem
+        Move (SizeOfArray(_gaHtmlColorNames)-1) to iMax
+        Move (Lowercase(sColorName)) to sColorName
+        For iItem from 0 to iMax
+            If (sColorName=Lowercase(_gaHtmlColorNames[iItem].sName)) Begin
+                Function_Return _gaHtmlColorNames[iItem].sHtmlColor
+            End
+        Loop
+        Function_Return ""
+    End_Function
+    
+    //> Translate a #xxxxxx type color into an rgb one.
+    Function HTMLToRgb String sColor Returns Integer
+        Integer iRed iGreen iBlue
+        If (Left(sColor,1)<>"#") Begin
+            // perhaps it's a color name then:
+            Get HtmlCssColorNameToHTML sColor to sColor
+        End
+        Move (Uppercase(Replace("#",sColor,""))) to sColor
+        Get HexToByte of oStringFunctions (Mid(sColor,2,1)) to iRed
+        Get HexToByte of oStringFunctions (Mid(sColor,2,3)) to iGreen
+        Get HexToByte of oStringFunctions (Mid(sColor,2,5)) to iBlue
+        Function_Return (Compose(Self,iRed,iGreen,iBlue))
+    End_Function
+
+    Function HtmlBrighten String sColor Integer iPercent Returns String
+        Integer iRgb
+        Get HTMLToRgb sColor to iRgb
+        Get Brighten iRgb iPercent to iRgb
+        Get RgbToHTML iRgb to sColor
+        Function_Return sColor
+    End_Function
+
+    Function HtmlDarken String sColor Integer iPercent Returns String
+        Integer iRgb
+        Get HTMLToRgb sColor to iRgb
+        Get Darken iRgb iPercent to iRgb
+        Get RgbToHTML iRgb to sColor
+        Function_Return sColor
+    End_Function
+
+    //> To be used when generating vbs or vba. Returns the color in a syntax that can be used with visual basic.
+    Function ToVBA Integer iColor Returns String
+        Integer iRed iGreen iBlue
+        Move (iColor iand $0000FF) to iRed
+        Move (iColor iand $00FF00/256) to iGreen
+        Move (iColor iand $FF0000/65536) to iBlue
+        Function_Return ("RGB("+String(iRed)+","+String(iGreen)+","+String(iBlue)+")")
+    End_Function
+
+    //> Returns a 'cool' color 
+    Function CoolColor Integer iColorIndex Returns Integer
+        Function_Return _gaColors[iColorIndex]
+    End_Function
+
+    Function CoolHtmlColor Integer iColorIndex Returns String
+        Function_Return (RgbToHTML(Self,CoolColor(Self,iColorIndex)))
+    End_Function
+    
+End_Class // cRgbFunctions
+
+//> Global integer that points to a cRgbFunctions class object.
+Global_Variable Integer oRgbFunctions
+
+Object _oRgbFunctions is a cRgbFunctions
+    Move Self to oRgbFunctions
+//    Send _ShowCoolColorCompositions
+    Procedure AddHtmlColor String sColorName String sHtmlColor
+        Integer iIndex
+        Move (SizeOfArray(_gaHtmlColorNames)) to iIndex
+        Move sColorName to _gaHtmlColorNames[iIndex].sName
+        Move sHtmlColor to _gaHtmlColorNames[iIndex].sHtmlColor
+    End_Procedure
+    Send AddHtmlColor "AliceBlue"                 "#F0F8FF"
+    Send AddHtmlColor "AntiqueWhite"              "#FAEBD7"
+    Send AddHtmlColor "Aqua"                      "#00FFFF"
+    Send AddHtmlColor "Aquamarine"                "#7FFFD4"
+    Send AddHtmlColor "Azure"                     "#F0FFFF"
+    Send AddHtmlColor "Beige"                     "#F5F5DC"
+    Send AddHtmlColor "Bisque"                    "#FFE4C4"
+    Send AddHtmlColor "Black"                     "#000000"
+    Send AddHtmlColor "BlanchedAlmond"            "#FFEBCD"
+    Send AddHtmlColor "Blue"                      "#0000FF"
+    Send AddHtmlColor "BlueViolet"                "#8A2BE2"
+    Send AddHtmlColor "Brown"                     "#A52A2A"
+    Send AddHtmlColor "BurlyWood"                 "#DEB887"
+    Send AddHtmlColor "CadetBlue"                 "#5F9EA0"
+    Send AddHtmlColor "Chartreuse"                "#7FFF00"
+    Send AddHtmlColor "Chocolate"                 "#D2691E"
+    Send AddHtmlColor "Coral"                     "#FF7F50"
+    Send AddHtmlColor "CornflowerBlue"            "#6495ED"
+    Send AddHtmlColor "Cornsilk"                  "#FFF8DC"
+    Send AddHtmlColor "Crimson"                   "#DC143C"
+    Send AddHtmlColor "Cyan"                      "#00FFFF"
+    Send AddHtmlColor "DarkBlue"                  "#00008B"
+    Send AddHtmlColor "DarkCyan"                  "#008B8B"
+    Send AddHtmlColor "DarkGoldenRod"             "#B8860B"
+    Send AddHtmlColor "DarkGray"                  "#A9A9A9"
+    Send AddHtmlColor "DarkGrey"                  "#A9A9A9"
+    Send AddHtmlColor "DarkGreen"                 "#006400"
+    Send AddHtmlColor "DarkKhaki"                 "#BDB76B"
+    Send AddHtmlColor "DarkMagenta"               "#8B008B"
+    Send AddHtmlColor "DarkOliveGreen"            "#556B2F"
+    Send AddHtmlColor "DarkOrange"                "#FF8C00"
+    Send AddHtmlColor "DarkOrchid"                "#9932CC"
+    Send AddHtmlColor "DarkRed"                   "#8B0000"
+    Send AddHtmlColor "DarkSalmon"                "#E9967A"
+    Send AddHtmlColor "DarkSeaGreen"              "#8FBC8F"
+    Send AddHtmlColor "DarkSlateBlue"             "#483D8B"
+    Send AddHtmlColor "DarkSlateGray"             "#2F4F4F"
+    Send AddHtmlColor "DarkSlateGrey"             "#2F4F4F"
+    Send AddHtmlColor "DarkTurquoise"             "#00CED1"
+    Send AddHtmlColor "DarkViolet"                "#9400D3"
+    Send AddHtmlColor "DeepPink"                  "#FF1493"
+    Send AddHtmlColor "DeepSkyBlue"               "#00BFFF"
+    Send AddHtmlColor "DimGray"                   "#696969"
+    Send AddHtmlColor "DimGrey"                   "#696969"
+    Send AddHtmlColor "DodgerBlue"                "#1E90FF"
+    Send AddHtmlColor "FireBrick"                 "#B22222"
+    Send AddHtmlColor "FloralWhite"               "#FFFAF0"
+    Send AddHtmlColor "ForestGreen"               "#228B22"
+    Send AddHtmlColor "Fuchsia"                   "#FF00FF"
+    Send AddHtmlColor "Gainsboro"                 "#DCDCDC"
+    Send AddHtmlColor "GhostWhite"                "#F8F8FF"
+    Send AddHtmlColor "Gold"                      "#FFD700"
+    Send AddHtmlColor "GoldenRod"                 "#DAA520"
+    Send AddHtmlColor "Gray"                      "#808080"
+    Send AddHtmlColor "Grey"                      "#808080"
+    Send AddHtmlColor "Green"                     "#008000"
+    Send AddHtmlColor "GreenYellow"               "#ADFF2F"
+    Send AddHtmlColor "HoneyDew"                  "#F0FFF0"
+    Send AddHtmlColor "HotPink"                   "#FF69B4"
+    Send AddHtmlColor "IndianRed"                 "#CD5C5C"
+    Send AddHtmlColor "Indigo"                    "#4B0082"
+    Send AddHtmlColor "Ivory"                     "#FFFFF0"
+    Send AddHtmlColor "Khaki"                     "#F0E68C"
+    Send AddHtmlColor "Lavender"                  "#E6E6FA"
+    Send AddHtmlColor "LavenderBlush"             "#FFF0F5"
+    Send AddHtmlColor "LawnGreen"                 "#7CFC00"
+    Send AddHtmlColor "LemonChiffon"              "#FFFACD"
+    Send AddHtmlColor "LightBlue"                 "#ADD8E6"
+    Send AddHtmlColor "LightCoral"                "#F08080"
+    Send AddHtmlColor "LightCyan"                 "#E0FFFF"
+    Send AddHtmlColor "LightGoldenRodYellow"      "#FAFAD2"
+    Send AddHtmlColor "LightGray"                 "#D3D3D3"
+    Send AddHtmlColor "LightGrey"                 "#D3D3D3"
+    Send AddHtmlColor "LightGreen"                "#90EE90"
+    Send AddHtmlColor "LightPink"                 "#FFB6C1"
+    Send AddHtmlColor "LightSalmon"               "#FFA07A"
+    Send AddHtmlColor "LightSeaGreen"             "#20B2AA"
+    Send AddHtmlColor "LightSkyBlue"              "#87CEFA"
+    Send AddHtmlColor "LightSlateGray"            "#778899"
+    Send AddHtmlColor "LightSlateGrey"            "#778899"
+    Send AddHtmlColor "LightSteelBlue"            "#B0C4DE"
+    Send AddHtmlColor "LightYellow"               "#FFFFE0"
+    Send AddHtmlColor "Lime"                      "#00FF00"
+    Send AddHtmlColor "LimeGreen"                 "#32CD32"
+    Send AddHtmlColor "Linen"                     "#FAF0E6"
+    Send AddHtmlColor "Magenta"                   "#FF00FF"
+    Send AddHtmlColor "Maroon"                    "#800000"
+    Send AddHtmlColor "MediumAquaMarine"          "#66CDAA"
+    Send AddHtmlColor "MediumBlue"                "#0000CD"
+    Send AddHtmlColor "MediumOrchid"              "#BA55D3"
+    Send AddHtmlColor "MediumPurple"              "#9370DB"
+    Send AddHtmlColor "MediumSeaGreen"            "#3CB371"
+    Send AddHtmlColor "MediumSlateBlue"           "#7B68EE"
+    Send AddHtmlColor "MediumSpringGreen"         "#00FA9A"
+    Send AddHtmlColor "MediumTurquoise"           "#48D1CC"
+    Send AddHtmlColor "MediumVioletRed"           "#C71585"
+    Send AddHtmlColor "MidnightBlue"              "#191970"
+    Send AddHtmlColor "MintCream"                 "#F5FFFA"
+    Send AddHtmlColor "MistyRose"                 "#FFE4E1"
+    Send AddHtmlColor "Moccasin"                  "#FFE4B5"
+    Send AddHtmlColor "NavajoWhite"               "#FFDEAD"
+    Send AddHtmlColor "Navy"                      "#000080"
+    Send AddHtmlColor "OldLace"                   "#FDF5E6"
+    Send AddHtmlColor "Olive"                     "#808000"
+    Send AddHtmlColor "OliveDrab"                 "#6B8E23"
+    Send AddHtmlColor "Orange"                    "#FFA500"
+    Send AddHtmlColor "OrangeRed"                 "#FF4500"
+    Send AddHtmlColor "Orchid"                    "#DA70D6"
+    Send AddHtmlColor "PaleGoldenRod"             "#EEE8AA"
+    Send AddHtmlColor "PaleGreen"                 "#98FB98"
+    Send AddHtmlColor "PaleTurquoise"             "#AFEEEE"
+    Send AddHtmlColor "PaleVioletRed"             "#DB7093"
+    Send AddHtmlColor "PapayaWhip"                "#FFEFD5"
+    Send AddHtmlColor "PeachPuff"                 "#FFDAB9"
+    Send AddHtmlColor "Peru"                      "#CD853F"
+    Send AddHtmlColor "Pink"                      "#FFC0CB"
+    Send AddHtmlColor "Plum"                      "#DDA0DD"
+    Send AddHtmlColor "PowderBlue"                "#B0E0E6"
+    Send AddHtmlColor "Purple"                    "#800080"
+    Send AddHtmlColor "RebeccaPurple"             "#663399"
+    Send AddHtmlColor "Red"                       "#FF0000"
+    Send AddHtmlColor "RosyBrown"                 "#BC8F8F"
+    Send AddHtmlColor "RoyalBlue"                 "#4169E1"
+    Send AddHtmlColor "SaddleBrown"               "#8B4513"
+    Send AddHtmlColor "Salmon"                    "#FA8072"
+    Send AddHtmlColor "SandyBrown"                "#F4A460"
+    Send AddHtmlColor "SeaGreen"                  "#2E8B57"
+    Send AddHtmlColor "SeaShell"                  "#FFF5EE"
+    Send AddHtmlColor "Sienna"                    "#A0522D"
+    Send AddHtmlColor "Silver"                    "#C0C0C0"
+    Send AddHtmlColor "SkyBlue"                   "#87CEEB"
+    Send AddHtmlColor "SlateBlue"                 "#6A5ACD"
+    Send AddHtmlColor "SlateGray"                 "#708090"
+    Send AddHtmlColor "SlateGrey"                 "#708090"
+    Send AddHtmlColor "Snow"                      "#FFFAFA"
+    Send AddHtmlColor "SpringGreen"               "#00FF7F"
+    Send AddHtmlColor "SteelBlue"                 "#4682B4"
+    Send AddHtmlColor "Tan"                       "#D2B48C"
+    Send AddHtmlColor "Teal"                      "#008080"
+    Send AddHtmlColor "Thistle"                   "#D8BFD8"
+    Send AddHtmlColor "Tomato"                    "#FF6347"
+    Send AddHtmlColor "Turquoise"                 "#40E0D0"
+    Send AddHtmlColor "Violet"                    "#EE82EE"
+    Send AddHtmlColor "Wheat"                     "#F5DEB3"
+    Send AddHtmlColor "White"                     "#FFFFFF"
+    Send AddHtmlColor "WhiteSmoke"                "#F5F5F5"
+    Send AddHtmlColor "Yellow"                    "#FFFF00"
+    Send AddHtmlColor "YellowGreen"               "#9ACD32"
+End_Object
+

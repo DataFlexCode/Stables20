@@ -1,0 +1,52 @@
+This is un-finished business. 
+
+// Function ToSource is supposed to return the dataflex
+// source code representation of the tTableQuery values
+// passed to it.
+
+
+Use TableQueryFunctions.pkg
+
+Class cTQSourceCode is a cObject
+        Procedure _TableQuerySourceAddRelations tTableQuery stQ String[] ByRef aSourceLines
+            Integer iItem iMax
+            Move (SizeOfArray(stQ.aTableRelations)-1) to iMax
+            For iItem from 0 to iMax
+                Move ("    Send AddRelation of oTQ "+TableName(Self,stQ)+".file_number") to aSourceLines[SizeOfArray(aSourceLines)]
+            Loop
+        End_Procedure
+        Procedure _TableQuerySourceAddOutputColumns tTableQuery stQ String[] ByRef aSourceLines
+            Integer iItem iMax
+            Move (SizeOfArray(stQ.aOutputColumns)-1) to iMax
+            For iItem from 0 to iMax
+            Loop
+        End_Procedure
+        Procedure _TableQuerySourceAddFilters tTableQuery stQ String[] ByRef aSourceLines
+            Integer iItem iMax
+            Move (SizeOfArray(stQ.aFilters)-1) to iMax
+            For iItem from 0 to iMax
+            Loop
+        End_Procedure
+        Procedure _TableQuerySourceAddOrdering tTableQuery stQ String[] ByRef aSourceLines
+            Integer iItem iMax
+            Move (SizeOfArray(stQ.aOrdering)-1) to iMax
+            For iItem from 0 to iMax
+            Loop
+        End_Procedure
+    
+    Function ToSource tTableQuery stQ String sFunctionName Returns String[]
+        String[] aSourceLines
+        If (sFunctionName="") Begin
+            Get_Attribute DF_FILE_LOGICAL_NAME of stQ.iTable to sFunctionName
+            If (sFunctionName="") Begin
+                Move ("Table"+String(stQ.iTable)+"Q") to sFunctionName
+            End
+            Move ("Function "+sFunctionName+" Returns tTableQuery") to aSourceLines[SizeOfArray(aSourceLines)]
+            Move "    tTableQuery stQ" to aSourceLines[SizeOfArray(aSourceLines)]
+            Move "End_Function" to aSourceLines[SizeOfArray(aSourceLines)]
+        End
+        Function_Return aSourceLines
+    End_Function
+
+End_Class
+

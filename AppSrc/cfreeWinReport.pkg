@@ -1,0 +1,105 @@
+Use cWinReport2.pkg
+Use DateFunctions.pkg // Define oDateFunctions object
+Use WindowsInfo.pkg
+
+Class cfreeWinReport is a cWinReport2
+    // Needs header: Time, WS, dbR ver, page number, statistics
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property String psTopLeft
+        Property String psTopCenter
+        Property String psTopRight
+        Property String psBottomLeft
+        Property String psBottomCenter
+        Property String psBottomRight
+        
+        Property DateTime _pdtReportTime
+    End_Procedure
+    
+    Function ReportDateTime Returns DateTime
+        Function_Return (_pdtReportTime(Self))
+    End_Function
+    
+
+    Procedure Page_Top
+        DFBeginHeader DFPageTop 
+            DFHeaderPos  HDR_LEFT
+            DFHeaderWrap HDR_NOWRAP
+            DFHeaderFrame HDR_NOFRAME
+
+            DFFont "Times New Roman"
+            DFFontSize 10
+            DFWriteLn ""
+            If (psTopLeft(Self)<>"") Begin
+                DFWrite (psTopLeft(Self)) (FONT_LEFT)
+            End
+            If (psTopCenter(Self)<>"") Begin
+                DFWrite (psTopCenter(Self)) (FONT_CENTER)
+            End
+            If (psTopRight(Self)<>"") Begin
+                DFWrite (psTopRight(Self)) (FONT_RIGHT)
+            End
+            DFWriteLn ""
+//            DFWriteLn ("#pagecount#") (FONT_RIGHT)
+            
+            DFWriteLine DFGR_CURRLINE DFGR_CURRLINE DFGR_RB_MARGIN DFGR_HORI
+        DFEndHeader
+    End_Procedure
+
+    Procedure Page_Bottom
+        DFBeginHeader DFPageBottom
+            DFHeaderPos  HDR_LEFT
+            DFHeaderWrap HDR_NOWRAP
+            DFHeaderFrame HDR_NOFRAME
+
+            DFFont "Times New Roman"
+            DFFontSize 10
+
+            DFWriteLine DFGR_CURRLINE DFGR_CURRLINE DFGR_RB_MARGIN DFGR_HORI
+            If (psBottomLeft(Self)<>"") Begin
+                DFWrite (psBottomLeft(Self)) (FONT_LEFT)
+            End
+            If (psBottomCenter(Self)<>"") Begin
+                DFWrite (psBottomCenter(Self)) (FONT_CENTER)
+            End
+            If (psBottomRight(Self)<>"") Begin
+                DFWrite (psBottomRight(Self)) (FONT_RIGHT)
+            End
+            DFWriteLn ""
+            DFWriteLn ""
+        DFEndHeader
+    End_Procedure            
+    
+    Procedure OnWriteReport
+        Error 232 "No OnWriteReport procedure declared"
+    End_Procedure
+    
+    Procedure OnInitHeaderAndFooter
+        String sTime sValue
+        Date dValue
+        Send DecomposeDateTimeString of oDateFunctions (_pdtReportTime(Self)) (&dValue) (&sTime)
+        Get DateToText of oDateFunctions dValue "#DN3 #D-#MN3-#Y4" to sValue
+        Move (sValue+" "+sTime+"     Page #pagecount#") to sValue
+        Set psTopRight to sValue 
+        Set psBottomRight to ("Windows user: "+NetworkUserName(oWindowsInfo))
+    End_Procedure
+    
+    Function Start_Report Returns Integer
+        Integer iStatus
+        Set No_Finding_State to True
+        Send DFSetMargins 2.5 1.5 1.00 1.25 // Left Top Right Bottom
+        Set _pdtReportTime to (SystemDateTime(oDateFunctions))
+        Send OnInitHeaderAndFooter
+        Forward Get Start_Report to iStatus
+
+        If (iStatus=RPT_OK) Begin
+            DFFont "Courier New"
+            DFFontSize 9
+            Send OnWriteReport
+            Get End_Report iStatus to iStatus                    
+        End 
+        Function_Return iStatus
+    End_Function
+End_Class // cfreeReport
+

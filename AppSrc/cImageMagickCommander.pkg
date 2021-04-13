@@ -1,0 +1,642 @@
+﻿//> ImageMagick is a piece of image-software: http://www.imagemagick.org/
+//> Link to command line options: http://www.imagemagick.org/script/command-line-options.php
+//> Link to example scripts: http://www.imagemagick.org/script/conjure.php
+//>
+//> NOTE!!!
+//> When used as part as a web-service I have found it to be necessary to enable the "Interact
+//> with the desktop". This is done in "Control Panel -> Administration -> Services" panel. In
+//> there enable for the "DataFlex xx.x Web Application Server" service.
+
+Use FileFunctions.pkg
+Use StartProg.pkg
+Use XmlBuilder.pkg
+Use cRegistry.pkg
+Use WinUuid.pkg
+
+// ToDo: DataBaseFoundation must be told how to name entity-folders.
+// Could be like this:
+// Set TableDocumentFolderPrefix Order.file_number to Customer.file_number
+
+//> A folder contains a number of images as well as possibly some other types
+//> of files.
+//>
+//> The image indexer reads the folder (excluding subfolders) and if it finds
+//> any images it creates a subfolder called "image-cache". The indexer reads
+//> each image and stores a number of reduced-size versions in the imgcache.
+//>
+//> Exactly which reduced-size images that are produced is determinded by an array
+//> of tIMImageSize that is passed to the index method.
+//>
+//> Definition ImageOwner: The entity that 'owns' the picture (that has the right
+//> to remove it again, for example). It is expected, that users with access to
+//> the entity (in some sort of way) also gets access to the image or image-folder.
+//>
+//> Definition ImageConsumer: A module of the software that retrieves images
+//> from a database.
+
+//> a tIMImageSize value is used to indicate the factual size of an image.
+//> It is also used when requesting an image with particular dimensions.
+Struct tIMImageSize
+    Integer iWidth   // 0: Width doesn't matter
+    Integer iHeight  // 0: Height doesn't matter
+End_Struct
+//
+Struct tIMImage
+    String sFileName
+    tIMImageSize stPixelSize
+    Integer iByteSize
+End_Struct
+
+//
+//Struct tIMImageFolder
+//End_Struct
+//
+//Struct tIMRequest
+//    String sFolder
+//    String sMask
+//    Move 
+//End_Struct
+
+//
+//
+//
+//
+//  <?xml version="1.0" encoding="UTF-8"?>
+//  <group>
+//      <image id="family">
+//          <read filename="palm-trees.gif"/>
+//          <resize geometry="300x100"/>
+//          <write filename="family-vacation.png"/>
+//      </image>
+//  </group>
+//
+//
+//
+//
+
+//Struct tIMCreateCachedCopyParam // Parameter for ConvertImage
+//    // and the image original is 200x300 the following 
+//    // 
+//End_Struct
+
+// This should be turned into a class so that the application developer has a chance of
+// handling the setting of the psImageMagickFolder property. 
+
+//> This object encapsulates some functions that are based on the ImageMagick command.
+Object oImageMagickFunctions is a cObject
+    
+    //>
+    Property String psImageMagickFolder ""
+    
+    // This constant is needed to enable the cRegistry class to read
+    // value from the 64 bit part of the registry (we ourselves are a
+    // 32 bit program.
+    Define imckKEY_WOW64_64KEY for |CI$0100
+
+    Function CurrentVersionFolder Returns String
+        Integer hoRegistry
+        Boolean bFound
+        String sFolder sKey
+
+        Get Create (RefClass(cRegistry)) to hoRegistry
+        Set phRootKey of hoRegistry to HKEY_LOCAL_MACHINE
+        Set pfAccessRights of hoRegistry to (Key_Read ior imckKEY_WOW64_64KEY)
+        Get OpenKey of hoRegistry "SOFTWARE\ImageMagick\Current" to bFound
+        If (bFound) Begin
+            If (ValueExists(hoRegistry,"BinPath")) Begin
+                Get ReadString of hoRegistry "BinPath" to sFolder
+            End
+            Send CloseKey of hoRegistry
+        End
+
+        Send Destroy of hoRegistry
+        If (IsDebuggerPresent()) Begin
+            If (sFolder="") Begin
+                Showln "ImageMagick bin folder not found"
+            End
+            Else Begin
+                Showln ("ImageMagick folder: "+sFolder)
+            End
+        End
+        Function_Return sFolder
+    End_Function
+
+    Procedure ActivateImageMagick
+        String sPath
+        Get psImageMagickFolder to sPath
+        If (sPath="") Begin
+            Get CurrentVersionFolder to sPath
+            Set psImageMagickFolder to sPath
+        End
+        Get psImageMagickFolder to sPath
+        If (sPath="") Begin
+            Error DFERR_PROGRAM "ImageMagick is not installed on this machine"
+        End
+    End_Procedure
+
+//    Property String psImageMagickFolder (CurrentVersionFolder(Self)) // "C:\Program Files\ImageMagick-6.9.1-Q16"
+
+    Function IsReady Returns Boolean
+        String sPath
+        Get psImageMagickFolder to sPath
+        Function_Return (sPath<>"")
+    End_Function
+
+    Object oXmlBuilder is a cXmlBuilder
+        Set _pbEscapeBackslash to True
+    End_Object
+
+    Function _ExecutablePath String sCommandName Returns String
+        Get AppendPath of oFileFunctions (psImageMagickFolder(Self)) sCommandName to sCommandName
+        Function_Return sCommandName
+    End_Function
+
+    Function _ImageFileName String sOriginalFilename Integer iWidth Integer iHeight Returns String
+        String sFolder sImageRootName sImageType sImageFileName
+        Get PathToFolder of oFileFunctions sOriginalFilename to sFolder
+        Get PathToFileRootName of oFileFunctions sOriginalFilename to sImageRootName
+        Get PathToType of oFileFunctions sOriginalFilename to sImageType
+        Get AppendPath of oFileFunctions sFolder "image-cache" to sImageFileName
+        Get AppendPath of oFileFunctions sImageFileName sImageRootName to sImageFileName
+        Move (sImageFileName+" {"+String(iWidth)+"x"+String(iHeight)+"}."+sImageType) to sImageFileName
+        Function_Return sImageFileName
+    End_Function
+
+    Function DefaultImageWidths Returns Integer[]
+        Integer[] aValues
+        Move 25 to aValues[SizeOfArray(aValues)]
+        Move 50 to aValues[SizeOfArray(aValues)]
+        Move 100 to aValues[SizeOfArray(aValues)]
+        Move 200 to aValues[SizeOfArray(aValues)]
+        Move 400 to aValues[SizeOfArray(aValues)]
+        Move 800 to aValues[SizeOfArray(aValues)]
+        Move 1600 to aValues[SizeOfArray(aValues)]
+        Move 3200 to aValues[SizeOfArray(aValues)]
+        Function_Return aValues
+    End_Function
+
+    Function DefaultImageHeights Returns Integer[]
+        Function_Return (DefaultImageWidths(Self))
+    End_Function
+
+//    Function _ImageCacheSizesOnDisk String sImageFile Returns tIMImageSize[]
+//        tFileData[] aFileData
+//
+//    End_Function
+
+    //> Function ImageCache returns an array of dimensions
+    Function ImageCache String sImageFile ;
+                        Integer[] aWidthsToBeGenerated ;
+                        Integer[] aHeightsToBeGenerated ;
+                        Integer iCode ; // 0=exists on disk 1=missing from disk 2=too many
+                        Returns tIMImageSize[]
+        tIMImageSize[] aSizes
+        Function_Return aSizes
+    End_Function
+
+        Procedure _AddDimension tIMImageSize[] ByRef aSizes Integer iWidth Integer iHeight
+            Integer iIndex
+            If (iWidth<=3200 and iHeight<=3200) Begin
+                Move (SizeOfArray(aSizes)) to iIndex
+                Move iWidth to aSizes[iIndex].iWidth
+                Move iHeight to aSizes[iIndex].iHeight
+            End
+        End_Procedure
+
+        Function _DimensionArray Integer iOrigWidth Integer iOrigHeight ;
+                                 Integer[] aWidthsToBeGenerated ;
+                                 Integer[] aHeightsToBeGenerated Returns tIMImageSize[]
+            tIMImageSize[] aSizes aReturnSizes
+            Integer iItem iMax iWidth iHeight
+            Number nAspect
+
+            Move (Number(iOrigWidth)/Number(iOrigHeight)) to nAspect
+            Send _AddDimension (&aSizes) iOrigWidth iOrigHeight
+
+            Move (SizeOfArray(aWidthsToBeGenerated)-1) to iMax
+            For iItem from 0 to iMax
+                Move aWidthsToBeGenerated[iItem] to iWidth
+                If (iWidth<iOrigWidth) Begin
+                    Send _AddDimension (&aSizes) iWidth (iWidth/nAspect)
+                End
+            Loop
+
+            Move (SizeOfArray(aHeightsToBeGenerated)-1) to iMax
+            For iItem from 0 to iMax
+                Move aHeightsToBeGenerated [iItem] to iHeight
+                If (iHeight<iOrigHeight) Begin
+                    Send _AddDimension (&aSizes) (iHeight*nAspect) iHeight
+                End
+            Loop
+            Move (SortArray(aSizes)) to aSizes
+
+            Move (SizeOfArray(aSizes)-1) to iMax
+            For iItem from 0 to iMax
+                If (iItem=0) Begin
+                    Move aSizes[iItem] to aReturnSizes[SizeOfArray(aReturnSizes)]
+                End
+                Else Begin
+                    If (aSizes[iItem].iHeight<>aSizes[iItem-1].iHeight) Begin
+                        // If last item (biggest size)    or    If height is at least 10% bigger than previous
+                        If (iItem=iMax or aSizes[iItem].iHeight>(aSizes[iItem-1].iHeight*1.1)) Begin
+                            Move aSizes[iItem] to aReturnSizes[SizeOfArray(aReturnSizes)]
+                        End
+                    End
+                End
+            Loop
+
+            Function_Return (ReverseArray(aReturnSizes)) // largest first
+        End_Function
+
+//    Procedure RebuildImageCache String sImagePath
+//        Boolean bSuccess
+//        String sFolder sImageFile sScriptFile sSaveAs
+//        Integer iChannel hXml
+//        Integer iSizeItem iSizeMax
+//        Integer[] aWidthsToBeGenerated
+//        Integer[] aHeightsToBeGenerated 
+//        tIMImage[] aImages
+//        tIMImageSize[] aSizes
+//
+//        If (not(sImagePath contains "image-cache")) Begin
+//            If (FileExists(oFileFunctions,sImagePath)=1) Begin
+//                Get PathToFolder of oFileFunctions sImagePath to sFolder
+//                Get PathToFileName of oFileFunctions sImageFile to sImageFile
+//                
+//                If (CreateFolderIfNotExist(oFileFunctions,AppendPath(oFileFunctions,sFolder,"image-cache"))) Begin
+//                    Get DefaultImageWidths to aWidthsToBeGenerated
+//                    Get DefaultImageHeights to aHeightsToBeGenerated
+//                    Get _IdentifyImages of oImageMagickFunctions sFolder sImageFile to aImages
+//
+//                    Move "" to sScriptFile
+//                    Get _OpenScriptFileWrite (&sScriptFile) to iChannel
+//                    If (iChannel>=0) Begin
+//                    
+//                        Move oXmlBuilder to hXml
+//                        Send XmlToChannel of hXml iChannel
+//                        Send AddOpenElement of hXml "group"
+//                        Get _DimensionArray aImages[iItem].stPixelSize.iWidth aImages[iItem].stPixelSize.iHeight aWidthsToBeGenerated aHeightsToBeGenerated to aSizes
+//                        If (SizeOfArray(aSizes)>0) Begin
+//                            Send AddOpenElement of hXml "image"
+//                                Send AddAttribute of hXml "id" (String(iItem))
+//                                Send AddElement of hXml "read" ""
+//                                Send AddAttribute of hXml "filename" aImages[iItem].sFileName
+//                                                         
+//                                Move (SizeOfArray(aSizes)-1) to iSizeMax
+//                                For iSizeItem from 0 to iSizeMax
+//                                    Send AddElement of hXml "resize" ""
+//                                    Send AddAttribute of hXml "geometry" (String(aSizes[iSizeItem].iWidth)+"x"+String(aSizes[iSizeItem].iHeight))                        
+//                                    
+//                                    Get _ImageFileName aImages[iItem].sFileName aSizes[iSizeItem].iWidth aSizes[iSizeItem].iHeight to sSaveAs
+//                                    Send AddElement of hXml "write" ""
+//                                    Send AddAttribute of hXml "filename" sSaveAs
+//                                Loop
+//                                
+//                            Send CloseElement of hXml // "image"
+//                        End
+//                        Send CloseElement of hXml // "group"
+//                        Send EndXml of hXml
+//                        Send CloseOutput of oFileFunctions iChannel
+//                        
+//                        // Now the script file is ready and now the script must be executed
+//                        Get _ExecutablePath "conjure.exe" to sCommand
+//                        Move (sScriptFile) to sScriptFile
+//                        Runprogram Wait sCommand ('"'+sScriptFile+'"')
+//                        Get DeleteFileNew of oFileFunctions sScriptFile False to bSuccess
+//                    End
+////
+////                
+////                
+////    
+////                End
+////                Else Begin
+////                    Get AppendPath of oFileFunctions sFolder "image-cache" to sFolder
+////                    Error DFERR_PROGRAM ("Folder cannot be created: "+sFolder)
+////                End
+////            End
+////            Else Begin
+////                Error DFERR_PROGRAM ("Image does not exist: "+sImagePath)
+////            End
+////        End
+////        Else Begin
+////            Error DFERR_PROGRAM ("Cannot rebuild image cache of already cached image: "+sImagePath)
+////        End
+////
+////        Integer iItem iMax hXml iChannel
+////        Boolean bSuccess
+////        Integer iSizeItem iSizeMax
+////        String sScriptFile sSaveAs
+////        String sCommand sFolder
+////        
+////        Get
+////
+////        If (CreateFolderIfNotExist(oFileFunctions,AppendPath(oFileFunctions,sFolder,"image-cache"))) Begin
+////        
+////            Get DefaultImageWidths to aWidthsToBeGenerated
+////            Get DefaultImageHeights to aHeightsToBeGenerated
+////            Get _FilesInImageFolder of oImageMagickFunctions sFolder "*.jpg" to aImages
+////            
+////                
+////            Move (SizeOfArray(aImages)-1) to iMax
+////            For iItem from 0 to iMax
+////            Loop
+////        End
+////        Else Begin
+////            Error DFERR_PROGRAM ("Could not create image-cache folder: "+sFolder)
+////        End
+//    End_Procedure
+
+    //> Returns an array of type tIMImage[] with one item per file in the
+    //> the folder, that matched sMask.
+    Function ImageArray String sFolder String sMask Returns tIMImage[]
+        tIMImage[] aImages
+        If (sMask="") Begin
+            Move "*" to sMask
+        End
+        Get _IdentifyImages of oImageMagickFunctions sFolder sMask to aImages
+        Function_Return aImages
+    End_Function
+    
+    Procedure RebuildCache String sPath
+        Integer iRebuildPathType // 0=can't, 1=file, 2=folder
+        Integer iRunprogramRval
+        Boolean bSuccess
+        Integer iItem iMax hXml iChannel
+        Integer iSizeItem iSizeMax
+        Integer[] aWidthsToBeGenerated
+        Integer[] aHeightsToBeGenerated
+        tIMImageSize[] aSizes
+        tIMImage[] aImages
+        String sScriptFile sSaveAs sImageFile sFolder
+        String sCommand sImageCacheFolderName
+        String sDeleteArg
+
+        Get FileExists of oFileFunctions sPath to iRebuildPathType // 0=can't, 1=file, 2=folder
+
+        If (iRebuildPathType<>0) Begin
+
+            If (iRebuildPathType=1) Begin // aSingle file
+                Get PathToFolder of oFileFunctions sPath to sFolder
+                Get PathToFileName of oFileFunctions sPath to sImageFile
+            End
+            Else Begin // Folder
+                Move sPath to sFolder
+                Move "*.jpg" to sImageFile
+            End
+
+            Get AppendPath of oFileFunctions sFolder "image-cache" to sImageCacheFolderName
+
+            If (CreateFolderIfNotExist(oFileFunctions,sImageCacheFolderName)) Begin
+
+                // Delete all files in the cache:
+                Get AppendPath of oFileFunctions sImageCacheFolderName sImageFile to sDeleteArg
+                Get PathStripType of oFileFunctions sDeleteArg to sDeleteArg
+                Move (sDeleteArg+".*") to sDeleteArg
+                Get DeleteFileNew of oFileFunctions sDeleteArg False to bSuccess // Clear the cache
+
+                Get DefaultImageWidths to aWidthsToBeGenerated
+                Get DefaultImageHeights to aHeightsToBeGenerated
+                Get _IdentifyImages of oImageMagickFunctions sFolder sImageFile to aImages
+
+                Move (SizeOfArray(aImages)-1) to iMax
+                For iItem from 0 to iMax
+                    Move "" to sScriptFile
+                    Get _OpenScriptFileWrite (&sScriptFile) to iChannel
+
+                    If (iChannel>=0) Begin
+                        Move oXmlBuilder to hXml
+                        Send XmlToChannel of hXml iChannel
+                        Send AddOpenElement of hXml "group"
+                        Get _DimensionArray aImages[iItem].stPixelSize.iWidth aImages[iItem].stPixelSize.iHeight aWidthsToBeGenerated aHeightsToBeGenerated to aSizes
+                        If (SizeOfArray(aSizes)>0) Begin
+                            Send AddOpenElement of hXml "image"
+                                Send AddAttribute of hXml "id" (String(iItem))
+                                Send AddElement of hXml "read" ""
+                                Send AddAttribute of hXml "filename" aImages[iItem].sFileName
+
+                                Move (SizeOfArray(aSizes)-1) to iSizeMax
+                                For iSizeItem from 0 to iSizeMax
+                                    Send AddElement of hXml "resize" ""
+                                    Send AddAttribute of hXml "geometry" (String(aSizes[iSizeItem].iWidth)+"x"+String(aSizes[iSizeItem].iHeight))
+
+                                    Get _ImageFileName aImages[iItem].sFileName aSizes[iSizeItem].iWidth aSizes[iSizeItem].iHeight to sSaveAs
+                                    Send AddElement of hXml "write" ""
+                                    Send AddAttribute of hXml "filename" sSaveAs
+                                Loop
+
+                            Send CloseElement of hXml // "image"
+                        End
+                        Send CloseElement of hXml // "group"
+                        Send EndXml of hXml
+                        Send CloseOutput of oFileFunctions iChannel
+
+                        // Now the script file is ready and now the script must be executed
+                        Get _ExecutablePath "conjure.exe" to sCommand
+                        If (FileExists(oFileFunctions,sCommand)=1) Begin
+                            Move (ff_ShellExecute(0,"",sCommand,'"'+sScriptFile+'"',"",0)) to iRunprogramRval
+                        End
+                        Else Begin
+                            Error DFERR_PROGRAM ("ImageMagick could not find: "+sCommand)
+                        End
+                        Get DeleteFileNew of oFileFunctions sScriptFile False to bSuccess
+                    End
+                Loop
+            End
+            Else Begin
+                Error DFERR_PROGRAM ("Could not create image-cache folder: "+sFolder)
+            End
+        End
+        Else Begin
+            Error DFERR_PROGRAM ("Path does not exist: "+sPath)
+        End
+    End_Procedure
+
+//    Procedure RebuildCacheOld String sFolder
+//        // Done: Auto-create image-cache folder
+//        // Done: Max 3200 in any dimension
+//        Boolean bSuccess
+//        Integer iItem iMax hXml iChannel
+//        Integer iSizeItem iSizeMax
+//        Integer[] aWidthsToBeGenerated 
+//        Integer[] aHeightsToBeGenerated 
+//        tIMImageSize[] aSizes
+//        tIMImage[] aImages
+//        String sScriptFile sSaveAs
+//        String sCommand
+//        
+//        If (CreateFolderIfNotExist(oFileFunctions,AppendPath(oFileFunctions,sFolder,"image-cache"))) Begin
+//        
+//            Get DefaultImageWidths to aWidthsToBeGenerated
+//            Get DefaultImageHeights to aHeightsToBeGenerated
+//            Get _FilesInImageFolder of oImageMagickFunctions sFolder "*.jpg" to aImages
+//            
+//            Move "" to sScriptFile
+//            Get _OpenScriptFileWrite (&sScriptFile) to iChannel
+//            Move oXmlBuilder to hXml
+//            Send XmlToChannel of hXml iChannel
+//            
+//            If (iChannel>=0) Begin
+//                Send AddOpenElement of hXml "group"
+//                
+//                Move (SizeOfArray(aImages)-1) to iMax
+//                For iItem from 0 to iMax
+//                    Get _DimensionArray aImages[iItem].stPixelSize.iWidth aImages[iItem].stPixelSize.iHeight aWidthsToBeGenerated aHeightsToBeGenerated to aSizes
+//                    If (SizeOfArray(aSizes)>0) Begin
+//                        Send AddOpenElement of hXml "image"
+//                            Send AddAttribute of hXml "id" (String(iItem))
+//                            Send AddElement of hXml "read" ""
+//                            Send AddAttribute of hXml "filename" aImages[iItem].sFileName
+//                                                     
+//                            Move (SizeOfArray(aSizes)-1) to iSizeMax
+//                            For iSizeItem from 0 to iSizeMax
+//                                Send AddElement of hXml "resize" ""
+//                                Send AddAttribute of hXml "geometry" (String(aSizes[iSizeItem].iWidth)+"x"+String(aSizes[iSizeItem].iHeight))                        
+//                                
+//                                Get _ImageFileName aImages[iItem].sFileName aSizes[iSizeItem].iWidth aSizes[iSizeItem].iHeight to sSaveAs
+//                                Send AddElement of hXml "write" ""
+//                                Send AddAttribute of hXml "filename" sSaveAs
+//                            Loop
+//                            
+//                        Send CloseElement of hXml // "image"
+//                    End
+//                Loop
+//                Send CloseElement of hXml // "group"
+//
+//                Send EndXml of hXml
+//                Send CloseOutput of oFileFunctions iChannel
+//                
+//                // Now the script file is ready and now the script must be executed
+//                Get _ExecutablePath "conjure.exe" to sCommand
+////                Move ('"'+sCommand+'"') to sCommand
+//                Move (sScriptFile) to sScriptFile
+//        
+//                Runprogram Wait sCommand ('"'+sScriptFile+'"')
+////                Runprogram background Shell (sCommand+'"'+sScriptFile+'"')
+//                
+//                Get DeleteFileNew of oFileFunctions sScriptFile False to bSuccess
+//            End
+//        End
+//        Else Begin
+//            Error DFERR_PROGRAM ("Could not create image-cache folder: "+sFolder)
+//        End
+//    End_Procedure
+    
+//    Function RequestImage String sFolder String sImage Returns tIMImage
+//        tFileData stFile
+//        Move stFile.
+//    End_Function
+        
+        Function _OpenScriptFileWrite String ByRef sScriptFile Returns Integer
+            Integer iChannel
+            String sFolder
+            If (sScriptFile="") Begin
+                Get UserTempFolder of oFileFunctions to sFolder
+                Get AppendPath of oFileFunctions sFolder (RandomHexUUID()) to sScriptFile
+                Move (sScriptFile+".msl") to sScriptFile
+                Get DirectOutput of oFileFunctions sScriptFile to iChannel
+                If (iChannel>=0) Begin
+                    Writeln channel iChannel '<?xml version="1.0" encoding="UTF-8"?>'
+                End
+            End
+            Else Begin
+                Error DFERR_PROGRAM "sScriptFile must be empty at when called"
+            End
+            Function_Return iChannel
+        End_Function
+        
+        
+        // Returns channel number for writing contents of the bat file.
+        Function _OpenBatFileWrite String ByRef sTempBatFile String ByRef sTempRedirectFile Returns Integer
+            Integer iChannel
+            String sFolder
+            If (sTempBatFile="" and sTempRedirectFile="") Begin
+                Get UserTempFolder of oFileFunctions to sFolder
+                Get AppendPath of oFileFunctions sFolder (RandomHexUUID()) to sTempBatFile
+                Move (sTempBatFile+".tmp") to sTempRedirectFile
+                Move (sTempBatFile+".bat") to sTempBatFile
+                Get DirectOutput of oFileFunctions sTempBatFile to iChannel
+            End
+            Else Begin
+                Error DFERR_PROGRAM "sTempBatFile must be empty at when called"
+            End
+            Function_Return iChannel
+        End_Function
+        
+//            Function _FilesInImageFolderHelpHelp String[] aImageInfo Returns tIMImage[]
+//            End_Function
+
+        Function _FilesInImageFolderHelp String[] aImageInfo Returns tIMImage[]
+            Integer iPos
+            tIMImage[] aImages
+            String sGeometry sLine sImageFileName
+            String[] aValues aDims
+            Integer iMax iItem
+            
+            Move (SizeOfArray(aImageInfo)-1) to iMax
+            For iItem from 0 to iMax
+                Move aImageInfo[iItem] to sLine
+                Move (Pos(" jpeg ",Lowercase(sLine))) to iPos
+                If (iPos>0) Begin
+                    Move (Left(sLine,iPos)) to sImageFileName
+                    Move (Replace(sImageFileName,sLine,"")) to sLine
+                    Move (Pos(".jpg",Lowercase(sImageFileName))) to iPos
+                    If (iPos>0) Begin
+                        Move (Left(sImageFileName,iPos+3)) to sImageFileName
+                        Move sImageFileName to aImages[iItem].sFileName
+                        
+                        Send SplitString of oStringFunctions sLine " " True True (&aValues)
+                        Move aValues[1] to sGeometry
+                        Send SplitString of oStringFunctions sGeometry "x" False False (&aDims)
+                        Move aDims[0] to aImages[iItem].stPixelSize.iWidth
+                        Move aDims[1] to aImages[iItem].stPixelSize.iHeight
+                    End
+                End
+            Loop
+            Function_Return aImages
+        End_Function
+
+    Function _IdentifyImages String sFolder String sMask Returns tIMImage[]
+        Boolean bSuccess
+        Integer iChannel iFileExists
+        Integer iRunprogramRval
+        String sCmdLn sAbsoluteMask
+        tIMImage[] aFiles
+        String sCommand sParams sTempBatFile sTempOutFile
+        String[] aValues
+
+        Get AppendPath of oFileFunctions sFolder sMask to sAbsoluteMask
+        Get _ExecutablePath "identify.exe" to sCommand
+        Get FileExists of oFileFunctions sCommand to iFileExists
+
+        Move ('"'+sAbsoluteMask+'"') to sParams
+        Move ('"'+sCommand+'"') to sCommand
+
+        Move "" to sTempBatFile
+        Move "" to sTempOutFile
+        Get _OpenBatFileWrite (&sTempBatFile) (&sTempOutFile) to iChannel
+        If (iChannel>=0) Begin
+            Writeln channel iChannel (sCommand*sParams*'>"'+sTempOutFile+'"')
+            Send CloseOutput of oFileFunctions iChannel
+            If (iFileExists=1) Begin
+                Move (ff_ShellExecute(0,"",sTempBatFile,"","",0)) to iRunprogramRval
+            End
+            Else Begin
+                Error DFERR_PROGRAM ("ImageMagick could not find: "+sCommand)
+            End
+            Get TextFileAsArray of oFileFunctions sTempOutFile to aValues
+            Get _FilesInImageFolderHelp aValues to aFiles
+            Get DeleteFileNew of oFileFunctions sTempBatFile False to bSuccess
+            Get DeleteFileNew of oFileFunctions sTempOutFile False to bSuccess
+        End
+        Function_Return aFiles
+    End_Function
+
+
+End_Object
+
+//Class cImageMagickCommander is a cObject
+//    Procedure Construct_Object
+//        Forward Send Construct_Object
+//    End_Procedure
+//
+//End_Class

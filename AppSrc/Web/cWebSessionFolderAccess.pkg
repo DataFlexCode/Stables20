@@ -1,0 +1,82 @@
+﻿// Facilitates access to session specific folders.
+//
+// Declare like this (after the cWebResourceMananger object has been declared)
+//
+//    Object oWebSessionFolderAccess is a cWebSessionFolderAccess
+//        Set pbUploadEnable to True
+//        Set pbDownloadEnable to True
+//    End_Object
+//
+// and reference via the ghoWebSessionFolderAccess handle.
+//
+//
+// Get SessionFolder of ghoWebSessionFolderAccess to sSessionFolder
+//
+
+Use WebAppGlobalObjectHandles.pkg
+Use cWebResourceManager.pkg
+
+Use FileFunctions.pkg
+
+Global_Variable Handle ghoWebSessionFolderAccess
+Move 0 to ghoWebSessionFolderAccess
+
+Class cWebSessionFolderAccess is a cObject
+    Procedure Construct_Object
+        String sFolder
+        Forward Send Construct_Object
+        
+        Get VdfFolderPath of oFileFunctions VDF_FILELIST to sFolder
+        Get PathToFolder of oFileFunctions sFolder to sFolder
+        Get AppendPath of oFileFunctions sFolder "session-folders" to sFolder
+        
+        Property String psRootFolder sFolder
+        Property Boolean pbUploadEnable True
+        Property Boolean pbDownloadEnable True
+        
+        Move Self to ghoWebSessionFolderAccess
+    End_Procedure
+    
+    Procedure End_Construct_Object
+        Boolean bOk
+        String sRootFolder
+        Forward Send End_Construct_Object
+        Get psRootFolder to sRootFolder
+        Get CreateFolderIfNotExist of oFileFunctions sRootFolder to bOk
+        If (bOk) Begin
+            If (pbUploadEnable(Self)) Begin
+                // Must be included _after_ the definition of a cWebResourceManager object
+                Send RegisterUploadFolder of ghoWebResourceManager sRootFolder 
+            End
+            If (pbDownloadEnable(Self)) Begin
+                Send RegisterDownloadFolder of ghoWebResourceManager sRootFolder
+            End
+        End
+        Else Begin
+            Error DFERR_PROGRAM ("Could not create session-data root folder: "+sRootFolder)
+        End
+    End_Procedure
+                 
+    Function SessionFolder Boolean bCreateIfNotExist Returns String
+        Boolean bOk
+        String sKey sRootFolder sSessionFolder
+
+        Get psRootFolder to sRootFolder
+        Get psSessionKey of ghoWebSessionManager to sKey
+        Get AppendPath of oFileFunctions sRootFolder sKey to sSessionFolder
+        If (bCreateIfNotExist) Begin
+            Get CreateFolderIfNotExist of oFileFunctions sSessionFolder to bOk
+            If (not(bOk)) Begin 
+                Error DFERR_PROGRAM ("Could not create session folder: "+sSessionFolder)
+            End
+        End
+        Function_Return sSessionFolder
+    End_Function
+    
+    Function FullPathFileName String sFileName Returns String
+        String sFolder
+        Get SessionFolder True to sFolder
+        Function_Return (AppendPath(oFileFunctions,sFolder,sFileName))
+    End_Function
+    
+End_Class
