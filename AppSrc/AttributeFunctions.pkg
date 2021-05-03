@@ -52,7 +52,7 @@ End_Struct
 Struct tAttributeDefinition
     String sName
     Integer iAttrType              // Attribute type
-    String sDisplayName            // Attribute display name
+    String sDisplayName            // Attribute display name                
     Boolean bWrite                 // Write access?
     Boolean bDawOnly               // Internal DAW use
     Integer iValueType             // DF_BCD or DF_ASCII
@@ -61,6 +61,7 @@ Struct tAttributeDefinition
     Boolean bIntFile               // Is this attribute stored in the int file?
     String  sIntFileKeyword        // If bIntFile then sIntFileKeyword indicates the keyword used in the INT file
     tAttributeDiscreteValue[] aLegalValues // Legal values
+    String  sDocumentationURL
 End_Struct
 
 Struct tAttributeValue
@@ -226,6 +227,18 @@ Class _cAttributeFunctions is a cObject
     
     Function AttributeName Integer iAttr Returns String
         Function_Return gaAttributes[iAttr].sDisplayName
+    End_Function
+    
+    Function AttributeTypeNameToId String sName Returns Integer
+        Integer iAttributeType iMax
+        Move (Uppercase(sName)) to sName
+        Move (SizeOfArray(gaAttributeTypes)-1) to iMax
+        For iAttributeType from 1 to iMax
+            If (sName=Uppercase(gaAttributeTypes[iAttributeType].sName)) Begin
+                Function_Return iAttributeType
+            End
+        Loop
+        Function_Return 0
     End_Function
 
         Procedure _AddAttribute Integer iAttr String sName Integer iAttrType String sDisplayName Boolean bWrite Boolean bDawOnly Integer iValueType Boolean bRuntimeOnly Boolean bDriverOnly
