@@ -1,4 +1,4 @@
-//> Compare two sequences of whatever
+﻿//> Compare two sequences of whatever
 //> pkg.doc.end
 Use VdfBase.pkg
 
@@ -228,9 +228,23 @@ Class cItemCompare is a Array
     End_Procedure
     
     Procedure RunCompareArrays Variant[] aValues1 Variant[] aValues2 Boolean bOrdered Integer iSyncLimit
+        Variant[] aValues1X
+        Variant[] aValues2X
+        Integer iItem iMax
+        
+        // Resolve the variants one by one. Then they're good.
+        Move (SizeOfArray(aValues1)-1) to iMax
+        For iItem from 0 to iMax
+            Move aValues1[iItem] to aValues1X[iItem]
+        Loop
+        Move (SizeOfArray(aValues2)-1) to iMax
+        For iItem from 0 to iMax
+            Move aValues2[iItem] to aValues2X[iItem]
+        Loop
+        
         Set _pbArrayCompare to True
-        Set _paValues1 to aValues1
-        Set _paValues2 to aValues2
-        Send RunCompare 0 (SizeOfArray(aValues1)-1) 0 (SizeOfArray(aValues2)-1) iSyncLimit bOrdered
+        Set _paValues1 to aValues1X
+        Set _paValues2 to aValues2X
+        Send RunCompare 0 (SizeOfArray(aValues1X)-1) 0 (SizeOfArray(aValues2X)-1) iSyncLimit bOrdered
     End_Procedure
 End_Class

@@ -325,7 +325,7 @@ End_Struct
                 
                 Get BrowseFileOpen of oFileFunctions "Select Workspace file" sStartFolder "All files (*.sws, *.ws and filelist.cfg's)|*.sws; *.ws; filelist.cfg|VDF Studio workspace file (*.sws)|*.sws|VDF Workspace file (*.ws)|*.ws|Filelist.cfg|filelist.cfg" to sFile
                 If (sFile<>"") Begin
-                    Send RecentlySelectedAdd of oList sFile
+//                    Send RecentlySelectedAdd of oList sFile
                     Set _psBrowsedValue to sFile
                     Send AcceptPanel
                 End
@@ -345,7 +345,7 @@ End_Struct
                 String sFilelist
                 Get SelectFilelist of oWorkspaceSelectorPanel to sFilelist
                 If (sFilelist<>"") Begin
-                    Send RecentlySelectedAdd of oList sFilelist
+//                    Send RecentlySelectedAdd of oList sFilelist
                     Set _psBrowsedValue to sFilelist
                     Send AcceptPanel
                 End

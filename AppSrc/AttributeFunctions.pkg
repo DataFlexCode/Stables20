@@ -52,13 +52,13 @@ End_Struct
 Struct tAttributeDefinition
     String sName
     Integer iAttrType              // Attribute type
-    String sDisplayName            // Attribute display name                
+    String sDisplayName            // Attribute display name
     Boolean bWrite                 // Write access?
     Boolean bDawOnly               // Internal DAW use
     Integer iValueType             // DF_BCD or DF_ASCII
     Boolean bRuntimeOnly           // Runtime only attribute (FILE attr)
     Boolean bDriverOnly            // Only query this (table-) attribute when driver is in use
-    Boolean bIntFile               // Is this attribute stored in the int file?
+    Integer iIntFileMode           // Is this attribute stored in the int file? 0=no, 1=sometimes, 2=Yes
     String  sIntFileKeyword        // If bIntFile then sIntFileKeyword indicates the keyword used in the INT file
     tAttributeDiscreteValue[] aLegalValues // Legal values
     String  sDocumentationURL
@@ -199,7 +199,15 @@ Class _cAttributeFunctions is a cObject
         Property Integer[] _paTempTableFilter
         Send _BuildAttributeTypesArray
         Send _BuildAttributesArray
+        
+        Property String psAttributeHelpURL "https://docs.dataaccess.com/dataflexhelp/mergedProjects/LanguageReference/##_Attribute.htm"
     End_Procedure
+    
+    Function AttributeHelpURL Integer iAttr Returns String
+        String sUrl
+        Get psAttributeHelpURL to sUrl
+        Function_Return (Replace("##",sUrl,gaAttributes[iAttr].sName))
+    End_Function
 
     // **** Initialization of the object ***************************************************
         Procedure _AddAttributeType Integer iAttrType String sName Integer iParams
@@ -213,8 +221,8 @@ Class _cAttributeFunctions is a cObject
         Send _AddAttributeType ATYPE_DRIVER   "Driver"        1
         Send _AddAttributeType ATYPE_DRVSRV   "Server"        2
         Send _AddAttributeType ATYPE_FILELIST "Filelist"      1
-        Send _AddAttributeType ATYPE_FILE     "File"          1
-        Send _AddAttributeType ATYPE_FIELD    "Field"         2
+        Send _AddAttributeType ATYPE_FILE     "Table"         1
+        Send _AddAttributeType ATYPE_FIELD    "Column"        2
         Send _AddAttributeType ATYPE_INDEX    "Index"         2
         Send _AddAttributeType ATYPE_IDXSEG   "Index segment" 3
         Send _AddAttributeType ATYPE_SPECIAL  "Special1"      3
@@ -229,6 +237,10 @@ Class _cAttributeFunctions is a cObject
         Function_Return gaAttributes[iAttr].sDisplayName
     End_Function
     
+    Function AttributeTypeName Integer iAttrType Returns String
+        Function_Return gaAttributeTypes[iAttrType].sName
+    End_Function
+
     Function AttributeTypeNameToId String sName Returns Integer
         Integer iAttributeType iMax
         Move (Uppercase(sName)) to sName
@@ -263,6 +275,11 @@ Class _cAttributeFunctions is a cObject
             Move iNextAvailIndex to gaCompressedAttributeIndices[iAttr]
             Move iAttr to gaInverseCompressedAttributeIndices[iAttrType][iNextAvailIndex]
         End_Procedure
+        
+        Procedure _SetAttributeIntParam Integer iAttr Integer iIntFileMode String sIntFileKeyword
+            Move iIntFileMode to gaAttributes[iAttr].iIntFileMode
+            Move sIntFileKeyword to gaAttributes[iAttr].sIntFileKeyword
+        End_Procedure        
 
         Procedure _AddAttributeLegalValue Integer iAttr Integer iValue String sCodeName String sDisplayName
             Integer iIndex
@@ -510,7 +527,34 @@ Class _cAttributeFunctions is a cObject
              Send _AddAttributeLegalValue DF_INDEX_SEGMENT_CASE DF_CASE_USED    "DF_CASE_USED"    "Case used"
              Send _AddAttributeLegalValue DF_INDEX_SEGMENT_CASE DF_CASE_IGNORED "DF_CASE_IGNORED" "Case ignored"
         Send _AddAttribute DF_INDEX_SEGMENT_FIELD     "DF_INDEX_SEGMENT_FIELD"     ATYPE_IDXSEG   "Segment field"         True  False DF_BCD   False False
+        
+        // Is this attribute stored in the int file? 0=no, 1=sometimes, 2=Yes
+        //                                                           V
+        Send _SetAttributeIntParam DF_FIELD_READ_ONLY                2 "FIELD_READ_ONLY"
+        Send _SetAttributeIntParam DF_FIELD_LENGTH                   2 "FIELD_LENGTH"
+        Send _SetAttributeIntParam DF_FILE_GENERATE_RECORD_ID_METHOD 2 "GENERATE_RECORD_ID_METHOD"
+        Send _SetAttributeIntParam DF_FIELD_RELATED_FILE             2 "FIELD_INDEX"
+        Send _SetAttributeIntParam DF_FIELD_RELATED_FIELD            1 "FIELD_RELATED_FILE"
+        Send _SetAttributeIntParam DF_FIELD_INDEX                    1 "FIELD_RELATED_FIELD"
+        Send _SetAttributeIntParam DF_FILE_OWNER                     2 "SCHEMA_NAME"
+        Send _SetAttributeIntParam DF_FILE_BLOCK_SIZE                2 "BLOCK_SIZE"
+        Send _SetAttributeIntParam DF_FILE_GET_RID_AFTER_CREATE      2 "GET_RID_AFTER_CREATE"
+        Send _SetAttributeIntParam DF_INDEX_NAME                     2 "INDEX_NAME" 
+        Send _SetAttributeIntParam DF_INDEX_SEGMENT_FIELD            2 "INDEX_SEGMENT_FIELD"
+        Send _SetAttributeIntParam DF_FILE_USE_DUMMY_ZERO_DATE       2 "USE_DUMMY_ZERO_DATE"  
+        Send _SetAttributeIntParam DF_FILE_REFIND_AFTER_SAVE         2 "REFIND_AFTER_SAVE"
+        Send _SetAttributeIntParam DF_FILE_TABLE_CHARACTER_FORMAT    2 "TABLE_CHARACTER_FORMAT"
+        Send _SetAttributeIntParam DF_FIELD_PRECISION                2 "FIELD_PRECISION"
+        Send _SetAttributeIntParam DF_INDEX_SEGMENT_DIRECTION        2 "INDEX_SEGMENT_DIRECTION"
+        Send _SetAttributeIntParam DF_INDEX_UNIQUE                   2 "INDEX_UNIQUE"
+        Send _SetAttributeIntParam DF_INDEX_NUMBER_SEGMENTS          2 "INDEX_NUMBER_SEGMENTS"
+        Send _SetAttributeIntParam DF_FIELD_NAME                     2 "FIELD_NAME"
+        Send _SetAttributeIntParam DF_FILE_MAX_ROWS_FETCHED          2 "MAX_ROWS_FETCHED"
+        Send _SetAttributeIntParam DF_INDEX_SEGMENT_CASE             2 "INDEX_SEGMENT_CASE"
     End_Procedure
+
+
+
 
     // **** Functions for reading the attributes of a database *****************************************
 
@@ -1769,6 +1813,45 @@ Class _cAttributeFunctions is a cObject
         Function_Return aResult
     End_Function
     
+    Procedure FilelistRemoveTable tFileList ByRef stFileList Integer iTable 
+        Integer iItem iMax iIndex
+        Move (SizeOfArray(stFileList.aTables)-1) to iMax
+        For iItem from 0 to iMax
+            Move (iMax-iItem) to iIndex
+            If (stFileList.aTables[iIndex].iReadFromFileListEntryNo=iTable) Begin
+                Move (RemoveFromArray(stFileList.aTables,iIndex)) to stFileList.aTables
+            End
+        Loop
+    End_Procedure
+    
+    Function FindTableByLogicalName tFileList stFileList String sLogicalName Returns Integer
+        Integer iItem iMax
+        String sValue
+        Move (Lowercase(sLogicalName)) to sLogicalName
+        Move (SizeOfArray(stFileList.aTables)-1) to iMax
+        For iItem from 0 to iMax
+            Get Attrib stFileList DF_FILE_LOGICAL_NAME stFileList.aTables[iItem].iReadFromFileListEntryNo 0 0 to sValue
+            If (sLogicalName=lowercase(sValue)) Begin
+                Function_Return stFileList.aTables[iItem].iReadFromFileListEntryNo
+            End
+        Loop
+        Function_Return 0
+    End_Function
+    
+    Procedure FilelistRemoveTableByLogicalName tFileList ByRef stFileList String sLogicalName 
+        Integer iTable
+        Get FindTableByLogicalName stFileList sLogicalName to iTable
+        If (iTable>0) Begin
+            Send FilelistRemoveTable (&stFileList) iTable
+        End
+    End_Procedure
+    
+    Procedure FilelistRemoveUtilityTables tFileList ByRef stFileList 
+        Send FilelistRemoveTableByLogicalName (&stFileList) "flexerrs"
+        Send FilelistRemoveTableByLogicalName (&stFileList) "codemast"
+        Send FilelistRemoveTableByLogicalName (&stFileList) "codetype"
+    End_Procedure
+    
             Function TableFieldIndex tTableField[] astFields tTableField strField Returns Integer
                 Integer iFieldIndex iFieldMax
                 Move (SizeOfArray(astFields)-1) to iFieldMax
@@ -2466,7 +2549,7 @@ Class _cAttributeFunctions is a cObject
         Integer iAttrMax iAttr
         Move (SizeOfArray(gaAttributes)-1) to iAttrMax
         For iAttr from 0 to iAttrMax
-            If (iAttrType=gaAttributes[iAttr].iAttrType) Begin
+            If (iAttrType=0 or iAttrType=gaAttributes[iAttr].iAttrType) Begin
                 If ((bDisplayName and sName=gaAttributes[iAttr].sDisplayName) or ;
                     (not(bDisplayName) and sName=gaAttributes[iAttr].sName)) Begin
                         Function_Return iAttr   

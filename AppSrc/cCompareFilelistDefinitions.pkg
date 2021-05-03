@@ -1,0 +1,525 @@
+﻿Use AttributeFunctions.pkg
+Use Compare.pkg
+
+// *********** cCompareFilelistDefinitions *************
+// Facilitates a mechanism for registering inequalities
+// between the two database definitions.
+//
+// If is meant to encapsulate the objects of the other 
+// classes defined in this package. Should look something
+// like this:
+//
+// Object oCompareDatabaseDefinitions is a cCompareFilelistDefinitions
+//     Object oTableCompare is a cCompareTableDefinitions
+//     End_Object
+//     Object oColumnCompare is a cCompareColumnDefinitions
+//     End_Object
+//     Object oIndexCompare is a cCompareIndicesDefinitions
+//     End_Object
+//     Object oIndexSegmentCompare is a cCompareIndexSegmentDefinitions
+//     End_Object                       
+// End_Object
+//
+// Get CompareFilelists of oCompareDatabaseDefinitions stFilelist1 stFilelist2 to aResultItems
+//
+Enum_List
+    Define C_COMP_CHANGED // It is the same item in both 1 and 2 but its value has changed
+    Define C_COMP_ONLY1 // Defined only in 1
+    Define C_COMP_ONLY2 // Defined only in 2
+End_Enum_List
+
+Struct tdfaCompareResultItem // a database compare cursor
+    Integer iAttr // From this we can infer the attr type 
+    Integer iCompareState // match (changed value), only in 1, only in 2
+    Integer iAttrType // In case if an "entity-match" or mismatch, we do not have a iAttr (0) and then we need iAttrType to identify the entity (table/index/driver...)
+    // These are used to track what entities on each side are being compared
+    Integer[] aEntityIndex1 // max 3 entries
+    Integer[] aEntityIndex2 // max 3 entries
+End_Struct
+
+
+Struct tdfaCompareResultFilter
+    Integer[] aAttributetypes
+    Boolean   bAttributetypesExclude // false = include 
+    Integer[] aAttributes
+    Boolean   bAttributesExclude // false = include 
+    
+    Boolean bInventoryChanges // columns tables indices
+    Boolean bAttributeChanges // 
+End_Struct
+
+{Visibility=private}
+Global_Variable tdfaCompareResultItem[] gaFilelistCompareResult
+
+Class cCompareFilelistDefinitions is a cObject
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Property Integer[] paEntityIndex1
+        Property Integer[] paEntityIndex2
+
+        Property Handle phoTablesCompare // handles comparing two lists of tables
+        Property Handle phoFieldsCompare // handles comparing two lists of columns
+        Property Handle phoIndicesCompare // handles comparing two lists of indices
+        Property Handle phoIndexSegmentCompare // handles comparing two lists of index-segments
+    End_Procedure
+    
+    Procedure ResetResultBuilder
+        Move (ResizeArray(gaFilelistCompareResult,0)) to gaFilelistCompareResult
+        Set paEntityIndex1 to (ResizeArray(paEntityIndex1(Self),0))
+        Set paEntityIndex2 to (ResizeArray(paEntityIndex2(Self),0))
+    End_Procedure
+    
+    Procedure PushContext Integer iEntityIndex1 Integer iEntityIndex2
+        Set paEntityIndex1 to (InsertInArray(paEntityIndex1(Self),-1,iEntityIndex1))
+        Set paEntityIndex2 to (InsertInArray(paEntityIndex2(Self),-1,iEntityIndex2))
+    End_Procedure
+    
+    Procedure DropContext
+        Integer[] aEmpty
+        Set paEntityIndex1 to aEmpty
+        Set paEntityIndex2 to aEmpty 
+    End_Procedure
+    
+    Procedure AddResult Integer iAttr Integer iAttrType Integer iCompareState 
+        tdfaCompareResultItem stResultItem
+        If (iAttr<>0 and iAttrType=0) Begin
+            Get AttributeType of oAttributeFunctions iAttr to iAttrType
+        End
+        Move iAttr to stResultItem.iAttr
+        Move iCompareState to stResultItem.iCompareState
+        Move iAttrType to stResultItem.iAttrType
+        Get paEntityIndex1 to stResultItem.aEntityIndex1
+        Get paEntityIndex2 to stResultItem.aEntityIndex2
+        // Make sure there's always 3 items in the arrays
+        Move (ResizeArray(stResultItem.aEntityIndex1,3)) to stResultItem.aEntityIndex1
+        Move (ResizeArray(stResultItem.aEntityIndex2,3)) to stResultItem.aEntityIndex2
+        Move stResultItem to gaFilelistCompareResult[SizeOfArray(gaFilelistCompareResult)]
+    End_Procedure
+
+    Procedure OnTableOnlyIn1 tFieldAttributes stTable
+        Send AddResult 0 ATYPE_FILE C_COMP_ONLY1
+    End_Procedure
+    
+    Procedure OnTableOnlyIn2 tFieldAttributes stTable
+        Send AddResult 0 ATYPE_FILE C_COMP_ONLY2
+    End_Procedure
+    
+    Procedure OnColumnOnlyIn1 tFieldAttributes stColumn
+        Send AddResult 0 ATYPE_FIELD C_COMP_ONLY1
+    End_Procedure
+    
+    Procedure OnColumnOnlyIn2 tFieldAttributes stColumn
+        Send AddResult 0 ATYPE_FIELD C_COMP_ONLY2
+    End_Procedure
+    
+    Procedure OnIndexOnlyIn1 tIndexAttributes stIndex
+        Send AddResult 0 ATYPE_INDEX C_COMP_ONLY1
+    End_Procedure
+    
+    Procedure OnIndexOnlyIn2 tIndexAttributes stIndex
+        Send AddResult 0 ATYPE_INDEX C_COMP_ONLY2
+    End_Procedure
+    
+    Procedure OnIndexSegmentOnlyIn1 tIndexSegmentAttributes stSegment
+        Send AddResult 0 ATYPE_IDXSEG C_COMP_ONLY1
+    End_Procedure
+    
+    Procedure OnIndexSegmentOnlyIn2 tIndexSegmentAttributes stSegment
+        Send AddResult 0 ATYPE_IDXSEG C_COMP_ONLY2
+    End_Procedure
+
+    Procedure OnAttrOnlyIn1 Integer iAttrType Integer iAttr 
+        Send AddResult iAttr iAttrType C_COMP_ONLY1
+    End_Procedure
+
+    Procedure OnAttrOnlyIn2 Integer iAttrType Integer iAttr 
+        Send AddResult iAttr iAttrType C_COMP_ONLY2
+    End_Procedure
+
+    Procedure OnAttrUnchanged Integer iAttrType Integer iAttr 
+    End_Procedure
+
+    Procedure OnAttrChanged Integer iAttrType Integer iAttr 
+        Send AddResult iAttr iAttrType C_COMP_CHANGED
+    End_Procedure
+
+    // Returns true if identical
+    Function _CompareAttributes Integer iAttrType tAttributeValue[] aValues1 tAttributeValue[] aValues2 Returns Boolean
+        Boolean bIdentical
+        Integer iMax iItem iMax1 iMax2 iAttr
+        String sValue1 sValue2 // sDisplay1 sDisplay2
+        Integer[] aTableAttributes
+
+        Move True to bIdentical
+
+        Move gaAttributesByType[iAttrType] to aTableAttributes
+        Move (SizeOfArray(aTableAttributes)-1) to iMax
+        Move (SizeOfArray(aValues1)-1) to iMax1
+        Move (SizeOfArray(aValues2)-1) to iMax2
+        For iItem from 0 to iMax
+            Move aTableAttributes[iItem] to iAttr
+            If (iItem<=iMax1) Begin
+                Get _AttributeValue of oAttributeFunctions aValues1 iAttr to sValue1
+//                Get AttributeSymbolicValue of oAttributeFunctions iAttr sValue1 to sDisplay1
+            End
+            If (iItem<=iMax2) Begin
+                Get _AttributeValue of oAttributeFunctions aValues2 iAttr to sValue2
+//                Get AttributeSymbolicValue of oAttributeFunctions iAttr sValue2 to sDisplay2
+            End
+
+            If (iItem<=iMax1 and iItem<=iMax2) Begin // If they are both there
+                If (sValue1=sValue2) Begin
+                    Send OnAttrUnchanged iAttrType iAttr // sValue1 
+                End
+                Else Begin
+                    Send OnAttrChanged iAttrType iAttr // sValue1 sValue2 
+                    Move False to bIdentical
+                End
+            End
+            Else If (iItem<=iMax1 and iItem>iMax2) Begin
+                Send OnAttrOnlyIn1 iAttrType iAttr // sValue1 
+                Move False to bIdentical
+            End
+            Else If (iItem>iMax1 and iItem<=iMax2) Begin
+                Send OnAttrOnlyIn2 iAttrType iAttr // sValue2 
+                Move False to bIdentical
+            End
+        Loop
+        Function_Return bIdentical
+    End_Function
+
+    Function ValidateResultItem tdfaCompareResultItem stResultItem tdfaCompareResultFilter stFilter Returns Boolean
+        Boolean bListed
+        If (stResultItem.iAttr=0) Begin // inventory thing
+            If (not(stFilter.bInventoryChanges)) Begin
+                Function_Return False
+            End
+        End
+        Else Begin // attribute value thing
+            If (not(stFilter.bAttributeChanges)) Begin
+                Function_Return False
+            End
+            If (SizeOfArray(stFilter.aAttributes)>0) Begin
+                Move (SearchArray(stResultItem.iAttr,stFilter.aAttributes)) to bListed
+                If (stFilter.bAttributesExclude and bListed) Begin
+                    Function_Return False
+                End
+                If (not(stFilter.bAttributesExclude) and not(bListed)) Begin
+                    Function_Return False
+                End
+            End
+        End
+        
+        If (SizeOfArray(stFilter.aAttributetypes)>0) Begin
+            Move (SearchArray(stResultItem.iAttrType,stFilter.aAttributetypes)) to bListed
+            If (stFilter.bAttributetypesExclude and bListed) Begin
+                Function_Return False
+            End
+            If (not(stFilter.bAttributetypesExclude) and not(bListed)) Begin
+                Function_Return False
+            End
+        End
+        
+        Function_Return True
+    End_Function
+    
+    Function FilterResult tdfaCompareResultItem[] aResultItems tdfaCompareResultFilter stFilter Returns tdfaCompareResultItem[]
+        Integer iItem iMax
+        tdfaCompareResultItem[] aFilteredItems
+        Move (SizeOfArray(aResultItems)-1) to iMax
+        For iItem from 0 to iMax
+            If (ValidateResultItem(Self,aResultItems[iItem],stFilter)) Begin
+                Move aResultItems[iItem] to aFilteredItems[SizeOfArray(aFilteredItems)]
+            End
+        Loop
+        Function_Return aFilteredItems
+    End_Function
+    
+//    Function StructToVariantArray tTableAttributes[] aTables Returns Variant[]
+//        Integer iItem iMax
+//        Variant vValue
+//        Variant[] aResult
+//        Move (SizeOfArray(aTables)-1) to iMax
+//        For iItem from 0 to iMax
+//            Move aTables[iItem] to vValue
+//            Move vValue to aResult[iItem]
+//        Loop
+//        Function_Return aResult
+//    End_Function
+    
+    Function CompareFilelists tFileList stFilelist1 tFileList stFilelist2 Returns tdfaCompareResultItem[]
+        Boolean bIdentical
+        Integer iItem iMax
+//        Variant[] aValues1
+//        Variant[] aValues2
+        Send ResetResultBuilder
+//        Get StructToVariantArray stFilelist1.aTables to aValues1
+//        Get StructToVariantArray stFilelist2.aTables to aValues2
+        Get _CompareAttributes ATYPE_GLOBAL stFilelist1.aGlobalAttributes stFilelist2.aGlobalAttributes to bIdentical        
+        
+        Send FilelistRemoveUtilityTables of oAttributeFunctions (&stFilelist1) 
+        Send FilelistRemoveUtilityTables of oAttributeFunctions (&stFilelist2) 
+        
+        Send RunCompareArrays of (phoTablesCompare(Self)) stFilelist1.aTables stFilelist2.aTables True 0
+//        Send RunCompareArrays of (phoTablesCompare(Self)) aValues1 aValues2 True 0
+        Function_Return gaFilelistCompareResult
+    End_Function
+
+End_Class
+
+
+Class cCompareTableDefinitions is a cItemCompare
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Delegate Set phoTablesCompare to Self
+    End_Procedure
+
+    // Returns true if identical
+    Procedure CompareTables tTableAttributes stTable1 tTableAttributes stTable2
+        Boolean bIdentical
+        Get _CompareAttributes ATYPE_FILE stTable1.aTableAttributes stTable2.aTableAttributes to bIdentical        
+        Send RunCompareArrays of (phoFieldsCompare(Self)) stTable1.aFields stTable2.aFields True 0
+        Send RunCompareArrays of (phoIndicesCompare(Self)) stTable1.aIndices stTable2.aIndices True 0
+    End_Procedure
+    
+    Function CompareItems Integer iItem1 Integer iItem2 Returns Boolean
+        String sName1 sName2
+        tTableAttributes stTable1
+        tTableAttributes stTable2
+        Get VariantValue1 iItem1 to stTable1
+        Get VariantValue2 iItem2 to stTable2
+        Get _AttributeValue of oAttributeFunctions stTable1.aTableAttributes DF_FILE_LOGICAL_NAME to sName1
+        Get _AttributeValue of oAttributeFunctions stTable2.aTableAttributes DF_FILE_LOGICAL_NAME to sName2
+        Function_Return (Lowercase(sName1)=Lowercase(sName2))
+    End_Function
+
+    Procedure OnItemsMatched Integer iItem1 Integer iItem2
+        tTableAttributes stTable1
+        tTableAttributes stTable2
+        Get VariantValue1 iItem1 to stTable1
+        Get VariantValue2 iItem2 to stTable2
+        
+        Send PushContext stTable1.iReadFromFileListEntryNo stTable2.iReadFromFileListEntryNo
+        Send CompareTables stTable1 stTable2
+        Send RunCompareArrays of (phoFieldsCompare(Self)) stTable1.aFields stTable2.aFields True 0
+        Send RunCompareArrays of (phoIndicesCompare(Self)) stTable1.aIndices stTable2.aIndices True 0
+
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched1 Integer iItem Integer iInfo
+        tTableAttributes stTable
+        Get VariantValue1 iItem to stTable
+
+        Send PushContext stTable.iReadFromFileListEntryNo 0
+        Send OnTableOnlyIn1 stTable
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched2 Integer iItem Integer iInfo
+        tTableAttributes stTable
+        Get VariantValue2 iItem to stTable
+
+        Send PushContext 0 stTable.iReadFromFileListEntryNo
+        Send OnTableOnlyIn2 stTable
+        Send DropContext
+    End_Procedure
+
+End_Class
+
+// *********** cCompareColumnDefinitions ***********
+// Compares two lists of Columns. Called via the RunCompareArrays method.
+Class cCompareColumnDefinitions is a cItemCompare
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Delegate Set phoFieldsCompare to Self
+    End_Procedure
+
+    Function CompareItems Integer iItem1 Integer iItem2 Returns Boolean
+        String sName1 sName2
+        tFieldAttributes stField1
+        tFieldAttributes stField2
+        Get VariantValue1 iItem1 to stField1
+        Get VariantValue2 iItem2 to stField2
+        Get _AttributeValue of oAttributeFunctions stField1.aFieldAttributes DF_FIELD_NAME to sName1
+        Get _AttributeValue of oAttributeFunctions stField2.aFieldAttributes DF_FIELD_NAME to sName2
+        Function_Return (Lowercase(sName1)=Lowercase(sName2))
+    End_Function
+
+    Procedure CompareFields tFieldAttributes stField1 tFieldAttributes stField2
+        Boolean bIdentical
+        Get _CompareAttributes ATYPE_Field stField1.aFieldAttributes stField2.aFieldAttributes to bIdentical
+    End_Procedure
+
+    Procedure OnItemsMatched Integer iItem1 Integer iItem2
+        Number nField1 nField2
+        tFieldAttributes stField1
+        tFieldAttributes stField2
+        
+        Get VariantValue1 iItem1 to stField1
+        Get VariantValue2 iItem2 to stField2
+        
+        Get _AttributeValue of oAttributeFunctions stField1.aFieldAttributes DF_FIELD_NUMBER to nField1
+        Get _AttributeValue of oAttributeFunctions stField2.aFieldAttributes DF_FIELD_NUMBER to nField2
+        
+        Send PushContext nField1 nField2
+        Send CompareFields stField1 stField2
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched1 Integer iItem Integer iInfo
+        Number nField1
+        tFieldAttributes stField1
+
+        Get VariantValue1 iItem to stField1
+        Get _AttributeValue of oAttributeFunctions stField1.aFieldAttributes DF_FIELD_NUMBER to nField1
+
+        Send PushContext nField1 0
+        Delegate Send OnColumnOnlyIn1 stField1
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched2 Integer iItem Integer iInfo
+        Number nField2
+        tFieldAttributes stField2
+
+        Get VariantValue2 iItem to stField2
+        Get _AttributeValue of oAttributeFunctions stField2.aFieldAttributes DF_FIELD_NUMBER to nField2
+
+        Send PushContext 0 nField2
+        Delegate Send OnColumnOnlyIn2 stField2
+        Send DropContext
+    End_Procedure
+
+End_Class
+
+// *********** cCompareIndexSegmentDefinitions ***********
+// Compares two lists of indicaes . Called via the RunCompareArrays method.
+Class cCompareIndexSegmentDefinitions is a cItemCompare
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Delegate Set phoIndexSegmentCompare to Self
+    End_Procedure
+
+    Function CompareItems Integer iItem1 Integer iItem2 Returns Boolean
+        String sName1 sName2
+        tIndexSegmentAttributes stIndexSegment1
+        tIndexSegmentAttributes stIndexSegment2
+        Get VariantValue1 iItem1 to stIndexSegment1
+        Get VariantValue2 iItem2 to stIndexSegment2
+        Get _AttributeValue of oAttributeFunctions stIndexSegment1.aIndexSegmentAttributes DF_INDEX_SEGMENT_FIELD to sName1
+        Get _AttributeValue of oAttributeFunctions stIndexSegment2.aIndexSegmentAttributes DF_INDEX_SEGMENT_FIELD to sName2
+        Function_Return (Lowercase(sName1)=Lowercase(sName2))
+    End_Function
+
+    Procedure CompareIndexSegments tIndexSegmentAttributes stSegment1 tIndexSegmentAttributes stSegment2
+        Boolean bIdentical
+        Get _CompareAttributes ATYPE_IDXSEG stSegment1.aIndexSegmentAttributes stSegment2.aIndexSegmentAttributes to bIdentical
+    End_Procedure
+
+    //> This is sent when items are found to be identical. Should be augmented.
+    Procedure OnItemsMatched Integer iItem1 Integer iItem2
+        tIndexSegmentAttributes stSegment1
+        tIndexSegmentAttributes stSegment2
+        Number nSegment1 nSegment2
+
+        Get VariantValue1 iItem1 to stSegment1
+        Get VariantValue2 iItem2 to stSegment2
+        Get _AttributeValue of oAttributeFunctions stSegment1.aIndexSegmentAttributes DF_INDEX_SEGMENT_FIELD to nSegment1
+        Get _AttributeValue of oAttributeFunctions stSegment2.aIndexSegmentAttributes DF_INDEX_SEGMENT_FIELD to nSegment2
+
+        Send PushContext nSegment1 nSegment2
+        Send CompareIndexSegments stSegment1 stSegment2
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched1 Integer iItem Integer iInfo //  -2: The item is missing in the end of the sequence, -1: Sync limit exceeded. Missing somewhere in the middle of things, >=0: Missing from the left side at position iInfo
+        tIndexSegmentAttributes stSegment
+        Number nSegment1
+
+        Get VariantValue1 iItem to stSegment
+        Get _AttributeValue of oAttributeFunctions stSegment.aIndexSegmentAttributes DF_INDEX_SEGMENT_FIELD to nSegment1
+        
+        Send PushContext nSegment1 0
+        Delegate Send OnIndexSegmentOnlyIn1 stSegment
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched2 Integer iItem Integer iInfo //  -2: The item is missing in the end of the sequence, -1: Sync limit exceeded. Missing somewhere in the middle of things, >=0: Missing from the left side at position iInfo
+        tIndexSegmentAttributes stSegment
+        Number nSegment2
+
+        Get VariantValue2 iItem to stSegment
+        Get _AttributeValue of oAttributeFunctions stSegment.aIndexSegmentAttributes DF_INDEX_SEGMENT_FIELD to nSegment2
+        
+        Send PushContext 0 nSegment2
+        Delegate Send OnIndexSegmentOnlyIn2 stSegment
+        Send DropContext
+    End_Procedure
+
+End_Class
+
+// *********** cCompareIndicesDefinitions ***********
+// Compares two lists of indicaes . Called via the RunCompareArrays method.
+Class cCompareIndicesDefinitions is a cItemCompare
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        Delegate Set phoIndicesCompare to Self
+    End_Procedure
+
+    Function CompareItems Integer iItem1 Integer iItem2 Returns Boolean
+        String sName1 sName2
+        tIndexAttributes stIndex1
+        tIndexAttributes stIndex2
+        Get VariantValue1 iItem1 to stIndex1
+        Get VariantValue2 iItem2 to stIndex2
+        Get _AttributeValue of oAttributeFunctions stIndex1.aIndexAttributes DF_INDEX_NUMBER to sName1
+        Get _AttributeValue of oAttributeFunctions stIndex2.aIndexAttributes DF_INDEX_NUMBER to sName2
+        Function_Return (Lowercase(sName1)=Lowercase(sName2))
+    End_Function
+
+    Procedure CompareIndices tIndexAttributes stIndex1 tIndexAttributes stIndex2
+        Boolean bIdentical
+        Get _CompareAttributes ATYPE_INDEX stIndex1.aIndexAttributes stIndex2.aIndexAttributes to bIdentical
+    End_Procedure
+
+    //> This is sent when items are found to be identical. Should be augmented.
+    Procedure OnItemsMatched Integer iItem1 Integer iItem2
+        Integer iIndex1 iIndex2
+        tIndexAttributes stIndex1
+        tIndexAttributes stIndex2
+        Get VariantValue1 iItem1 to stIndex1
+        Get VariantValue2 iItem2 to stIndex2
+        Get _AttributeValue of oAttributeFunctions stIndex1.aIndexAttributes DF_INDEX_NUMBER to iIndex1
+        Get _AttributeValue of oAttributeFunctions stIndex2.aIndexAttributes DF_INDEX_NUMBER to iIndex2
+        Send PushContext iIndex1 iIndex2
+        Send CompareIndices stIndex1 stIndex2
+        Send RunCompareArrays of (phoIndexSegmentCompare(Self)) stIndex1.aSegments stIndex2.aSegments True 0
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched1 Integer iItem Integer iInfo //  -2: The item is missing in the end of the sequence, -1: Sync limit exceeded. Missing somewhere in the middle of things, >=0: Missing from the left side at position iInfo
+        Integer iIndex1 
+        tIndexAttributes stIndex
+        Get VariantValue1 iItem to stIndex
+        Get _AttributeValue of oAttributeFunctions stIndex.aIndexAttributes DF_INDEX_NUMBER to iIndex1
+        Send PushContext iIndex1 0
+        Delegate Send OnIndexOnlyIn1 stIndex
+        Send DropContext
+    End_Procedure
+
+    Procedure OnItemNotMatched2 Integer iItem Integer iInfo //  -2: The item is missing in the end of the sequence, -1: Sync limit exceeded. Missing somewhere in the middle of things, >=0: Missing from the left side at position iInfo
+        Integer iIndex2
+        tIndexAttributes stIndex
+        Get VariantValue2 iItem to stIndex
+        Get _AttributeValue of oAttributeFunctions stIndex.aIndexAttributes DF_INDEX_NUMBER to iIndex2
+        Send PushContext 0 iIndex2
+        Delegate Send OnIndexOnlyIn2 stIndex
+        Send DropContext
+    End_Procedure
+
+End_Class
+
