@@ -1,19 +1,18 @@
 ﻿//> This package provides an interface for finding records without the use of DataDictionaries.
 //>
-//> The idea is that you declare a variable of type tTableQuery and tell it what table and what
+//> The idea is that you declare a variable of type tTableQuery and tell it what table and
 //> filters you want and what output order you want. TQ then calculates the index to use for the
 //> scan. If it can not find an index in accordance with the desired output it will collect
 //> all the sorting information in memory and refind the records in the desired order.
 //>
 //> If the code happens to be running against an MSSQL backend it will skip all the figuring
-//> out and apply embedded SQL to the problem. This gives a potentially huge performance
-//> increase at no effort on behalf of the programmer.
+//> out and apply embedded SQL to the problem. This gives a potential performance increase.
 //>
 //> oTQ is a global object (of class cTableQueryFunctions) that encapsulates a group of
 //> functions. Using it to scan all orders in the order table goes like this:
 //>
 //> <code>
-//>     Use TableQueryFunctions.pkg // Define oTableQueryFunctions object
+//>     Use TableQueryFunctions.pkg // Define oTQ object
 //>
 //>     Procedure RunQuery
 //>         tTableQuery stQ // I use the prefix 'st' to signify a struct type
@@ -80,14 +79,12 @@
 //> If you look at filter (2) in the example above you can see that the ">"-comperator is represented by
 //> a tqGT symbol. Other comperators that may be used are:
 //>
-//>              tqLT, tqLE, tqEQ, tqGE, tqGT
+//>              tqLT, tqLE, tqEQ, tqGE, tqGT, tqNE
 //>
-//> end then there are these special ones intended for string evaluation and which cannot be used
-//> for search optimization:
+//> end then there are these special ones intended for string evaluation:
 //>
-//>              tqNE, tqMATCH, tqUCMATCH
+//>              tqMATCH, tqUCMATCH
 //>
-//> Well, tqNE is not just for string evaluation.
 //>
 //>
 //> You can run nested queries like this:
@@ -127,7 +124,7 @@
 //>             Send AddFilterRelate (&stOrderlineQ) Order.file_number
 //>
 //>             While (FindRecord(Self,&stOrderQ))
-//>                 Send ReUse (&stOrderlineQ) // Only "compile" once
+//>                 Send ReUse (&stOrderlineQ) // <-- Only "compile" first time
 //>                 While (FindRecord(Self,&stOrderlineQ))
 //>                 Loop
 //>             Loop
@@ -150,11 +147,11 @@
 //> </code>
 //>
 //> Calling HasData could be a lot faster than setting iLimit to 1 since the latter
-//> strategy may still force the query machine into generating the whole result-set and
-//> sort it some way in order to find out which record is actually the first. Calling
+//> may still force the tablequery to generate the whole result-set and
+//> sort it to find out which record is actually the first. Calling
 //> HasData does not do that.
 //>
-//> If the table that you are table querying is an SQL table and it has been "opened as", TableQuery
+//> If the table that you are querying is an SQL table that has been "opened as", TableQuery
 //> has no way of knowing what table name to use in the select statement. If you prepare the
 //> query with this line:
 //>
@@ -164,26 +161,6 @@
 //>
 //> that name will be used in the ESQL select statement and you'll be fine.
 //>
-//> A note on the source code in this package:
-//>
-//> An "_" character in the beginning of a name indicates that the procedure, property or whatever is
-//> meant to be used internally by this package only.
-//>
-//> Variable names are prefixed by s if string, b if boolean asf. Struct type variables are prefixed
-//> 'str' which should make one think 'struct' (not 'string').
-//>
-//> In order to test the function of TableQueryFunctions.pkg without actually programming you may
-//> download VDFXray (a multi-purpose VDF utility) from this address:
-//>
-//>             ftp.stureaps.dk/software/visualdataflex/vdfxray/
-//>
-//> Use VDFXray to open a workspace, select a table in the tables list. Right click and select
-//> "TableQuery Engine Inspector".
-//>
-//> You'll notice two panels appearing with the "TableQuery test facility" panel on top. If
-//> your screen is large enough try to position that panel so that you can see the list of
-//> columns in the panel behind it. If necessary by dragging the second panel partly off
-//> screen. You'll see the selection of that list changes as you specify columns to filter by.
 
 //> pkg.doc.end
 
@@ -217,27 +194,21 @@ Enum_List // Column value types
 End_Enum_List
 
 Enum_List // Filter comparison modes
-    Define tqLT // 0
-    Define tqLE // 1
-    Define tqEQ // 2
-    Define tqGE // 3
-    Define tqGT // 4
-    Define tqNE // 5
-    // These can never be used for index optimization:
-//    Define tqCONTAINS   // DO NOT USE
-//    Define tqIN         // DO NOT USE (use orlist instead)
-    Define tqMATCH      // When evaluated on the embedded database tqMATCH and tqUCMATCH may be
-    Define tqUCMATCH    // expensive. On SQL they are converted to 'like' predicates and they fly.
+    Define tqLT for 0
+    Define tqLE for 1
+    Define tqEQ for 2
+    Define tqGE for 3
+    Define tqGT for 4
+    Define tqNE for 5
+    Define tqMATCH for 6     // When evaluated on the embedded database tqMATCH and tqUCMATCH may be
+    Define tqUCMATCH for 7   // expensive. On SQL they are converted to 'like' predicates and they fly.
 
-    //Define tqStringIsIncluded
-    //Define tqStringContains
-
-    Define _tqComparisonMax   // Stop-marker
+    Define _tqComparisonMax for 8  // Stop-marker
 End_Enum_List
 
 Struct tTQResultRow
     RowID    riRowId
-    String   sSortValue
+    String[] aSortColumnValues
     String[] aColumnValues
 End_Struct
 
@@ -286,6 +257,7 @@ Struct tTQFilterSegment
     Integer iComp // tqEQ, tqLT, tgLE, tqMATCH etc...
     tWildCardEvalSequence stMatchEvalSequence // If selection by wild card string matching this member is needed
     _tTQValueSource stRightValue
+    Boolean bUppercaseFilter // Uppercase both sides before compare (!!!! ONLY FOR INTERNAL USE !!!!)
 End_Struct
 
 Struct _tTQTableRelationSegment
@@ -468,6 +440,8 @@ Global_Variable tTQTableMeta[]      _gTQaTableMeta
 Global_Variable Integer _giTQLogState // 0=No logging, 1=Log when LogTag'ed, 2=Log always
 Global_Variable Integer[] _gaTQLogTables
 
+Move 0 to _giTQLogState
+
 Procedure Set TableQuery_LogState Global Integer iState
     Move iState to _giTQLogState
 End_Procedure
@@ -506,7 +480,7 @@ Class cTQExpressionParser is a cExpressionParser
         tXPToken[] aSymbols
         tXPToken stSymbol
         Variant[] aContext
-        
+
         If (num_arguments>3) Begin
             Move aContext_opt to aContext
         End
@@ -538,111 +512,15 @@ End_Class
 
 // *******************************************************************
 
-Class cTableQuerySQL is a cObject // Generates an SQL statement
-    Procedure Construct_Object
-        Forward Send Construct_Object
-        Property String psCollation "Latin1_General_BIN" // Or maybe "SQL_Latin1_CP850_BIN"? Who knows?
-    End_Procedure
+Use cSqlStatementBuilder.pkg
 
-        Function _SQL_ColumnName tTableQuery stQ Integer hoTQ Integer iTable Integer iColumn Returns String
-            String sValue
-            Get ColumnName of hoTQ stQ iTable iColumn True to sValue
-            Function_Return sValue
-        End_Function
+Class cTableQuerySqlBuilder is a cSqlStatementBuilder // Generates an SQL statement
 
-        Function _SQL_TableName tTableQuery stQ Integer hoTQ Integer iTable Returns String
-            String sValue
-            Get TableName of hoTQ stQ iTable to sValue
-            Move ("["+sValue+"]") to sValue
-            Function_Return sValue
-        End_Function
-        
-                    Function _SQL_EscapeQuote String sValue Returns String
-                        Function_Return (Replaces("'",sValue,"char(39)"))
-                    End_Function
-                
-                Function _SQL_ExpressionToken tTableQuery stQ Integer hoTQ tXPGrammar stGrammar tXPToken stToken Boolean ByRef bError Returns String
-                    Move False to bError
-                    String sValue
-                    If (stToken.iType=XPTokenType_Error) Begin
-                        Move True to bError
-                        Function_Return ""
-                    End
-                    Else If (stToken.iType=XPTokenType_Operator) Begin
-                        Function_Return stGrammar.aOperators[stToken.iOperatorIndex].sSymbol
-                    End
-                    Else If (stToken.iType=XPTokenType_Symbol) Begin
-                        Function_Return stToken.sValue
-                    End
-                    Else If (stToken.iType=XPTokenType_FunctionCall) Begin
-                        Function_Return stGrammar.aFunctions[stToken.iOperatorIndex].sFunction
-                    End
-                    Else If (stToken.iType=XPTokenType_NewParameter) Begin
-                        Function_Return ","
-                    End
-                    Else If (stToken.iType=XPTokenType_EndFunctionCall) Begin
-                        Function_Return ")"
-                    End
-                    Else If (stToken.iType=XPTokenType_StringConstant) Begin
-                        Get _SQL_EscapeQuote stToken.sValue to sValue
-                        Function_Return ("'"+sValue+"'")
-                    End
-                    Else If (stToken.iType=XPTokenType_NumberConstant) Begin
-                        Function_Return stToken.sValue
-                    End
-                    Else If (stToken.iType=XPTokenType_IntegerConstant) Begin
-                        Function_Return stToken.sValue
-                    End
-                    Else If (stToken.iType=XPTokenType_LeftParenthesis) Begin
-                        Function_Return "("
-                    End
-                    Else If (stToken.iType=XPTokenType_RightParenthesis) Begin
-                        Function_Return ")"
-                    End
-                    Move True to bError
-                    Function_Return ""
-                End_Function
-            
-            Function _SQL_Expression tTableQuery stQ Integer hoTQ String sExpression Returns String
-                Boolean bError
-                Integer iMax iItem
-                Integer hoExprParser
-                Integer[] aLegalTables // For expressions
-                String sSqlExpr sAtom
-                tXPGrammar stGrammar
-                tXPError stError
-                tXPToken[] aSymbols
-                
-                Get phoExprParser to hoExprParser
-                
-                Get LegalExpressionTables stQ to aLegalTables
-                Set paAllowedTables of hoExprParser to aLegalTables
-                
-                Get NewGrammar of hoExprParser to stGrammar
-                Get TokenizeString of hoExprParser stGrammar sExpression (&stError) to aSymbols
-                
-                If (stError.sErrorText="" and SizeOfArray(aSymbols)>0) Begin
-                    Move "" to sSqlExpr
-                    Move (SizeOfArray(aSymbols)-1) to iMax
-                    
-                    For iItem from 0 to iMax
-                        Get _SQL_ExpressionToken stQ hoTQ stGrammar aSymbols[iItem] (&bError) to sAtom
-                        If (not(bError)) Begin
-                            Move (sSqlExpr+sAtom) to sSqlExpr
-                        End
-                        Else Begin
-                            Function_Return "expression-error"
-                        End
-                    Loop
-                    Function_Return sSqlExpr
-                End
-                Function_Return "expression-error"
-            End_Function
-
-        Function _SQL_SelectColumns tTableQuery stQ Integer hoTQ Returns String
+        Procedure _AddSqlColumns tTableQuery stQ tSqlStmt ByRef stStmt 
             Integer iMax iItem iTable iColumn
             Integer iFieldType iLength
-            String sColumnList sColumnName sTableName
+            String sColumnName sTableName
+            
             Move (SizeOfArray(stQ.aColumnSources)-1) to iMax
             If (iMax>=0) Begin
                 For iItem from 0 to iMax
@@ -650,397 +528,703 @@ Class cTableQuerySQL is a cObject // Generates an SQL statement
                     Move stQ.aColumnSources[iItem].iColumn to iColumn
                     
                     If (iTable>0) Begin // Tt's not an expression
-                        If (iItem<>0) Begin
-                            Move (sColumnList+",") to sColumnList
-                        End
-    
+
                         If (iColumn<>0) Begin
-                            Get _SQL_ColumnName stQ hoTQ iTable iColumn to sColumnName
-                            Get_Attribute DF_FIELD_TYPE of iTable iColumn to iFieldType
-                            If (iFieldType=DF_TEXT) Begin
-                                Get_Attribute DF_FIELD_NATIVE_LENGTH of iTable iColumn to iLength
-                                If (iLength>8000) Begin
-                                    Move ("LEFT("+sColumnName+",20)") to sColumnName
-                                End
-                            End
+                            Send AddStmtColumn (&stStmt) iTable iColumn
                         End
                         Else Begin
-                            Get TableName of hoTQ stQ iTable to sTableName
+                            Get SqlTableName iTable to sTableName
                             Move (sTableName+".*") to sColumnName
+                            Send AddStmtColumnExpr (&stStmt) sColumnName
                         End
-                        Move (sColumnList+sColumnName) to sColumnList
                     End
                     Else If (SizeOfArray(stQ.aColumnSources[iItem].aSymbols)>0) Begin 
-                        // It is an expression
-                        If (iItem<>0) Begin
-                            Move (sColumnList+",") to sColumnList
-                        End
-
-                        Move stQ.aColumnSources[iItem].sConstant to sColumnName
-                        Get _SQL_Expression stQ hoTQ sColumnName to sColumnName
-                        Move (sColumnList+sColumnName) to sColumnList
+// ToDo: Generate SQL for expression                
+//                        Move stQ.aColumnSources[iItem].sConstant to sColumnName
+//                        Get _SQL_Expression stQ hoTQ sColumnName to sColumnName
                     End
                 Loop
             End
             Else Begin
-                Move "*" to sColumnList
+                Send AddStmtColumnExpr (&stStmt) "*"
             End
-            Function_Return sColumnList
-        End_Function
+        End_Procedure
 
-            Procedure _SQL_OuterLeftJoin_AddSegments tTableQuery stQ Integer hoTQ String ByRef sFromTables Integer iRelateItem
-                Integer iItem iItemMax
-                String sColumnName sComp
-                tTQTableRelation strRelation
-                Move stQ.aTableRelations[iRelateItem] to strRelation
-                Move (SizeOfArray(strRelation.aSegments)-1) to iItemMax
-                For iItem from 0 to iItemMax
-                    If (iItem<>0) Begin
-                        Move (sFromTables+" AND") to sFromTables
-                    End
-                    Get _SQL_ColumnName stQ hoTQ strRelation.aSegments[iItem].iSourceTable strRelation.aSegments[iItem].iSourceColumn to sColumnName
-                    Move (sFromTables*sColumnName) to sFromTables
-
-                    Get _SQL_WhereClauseComperator strRelation.aSegments[iItem].iInnerJoinComp False False to sComp
-                    Move (sFromTables*sComp) to sFromTables
-
-                    Get _SQL_ColumnName stQ hoTQ strRelation.iTargetTable strRelation.aSegments[iItem].iTargetColumn to sColumnName
-                    Move (sFromTables*sColumnName) to sFromTables
-                Loop
-            End_Procedure
-
-            //select f.foo
-            //     , b.bar
-            //     , q.qux
-            //  from footable as f
-            //left outer
-            //  join bartable as b
-            //    on f.id = b.fid
-            //left outer
-            //  join quxtable as q
-            //    on b.id = q.bid
-
-        Function _SQL_OuterLeftJoins tTableQuery stQ Integer hoTQ Returns String
-            Integer iItem iItemMax
-            String sFromTables sTableName
-            Get TableName of hoTQ stQ stQ.iTable to sFromTables
-
-            Move (SizeOfArray(stQ.aTableRelations)-1) to iItemMax
-            For iItem from 0 to iItemMax
-                If (not(stQ.aTableRelations[iItem].bFixed)) Begin
-                    Get _SQL_TableName stQ hoTQ stQ.aTableRelations[iItem].iTargetTable to sTableName
-                    Move (sFromTables+" left outer join"*sTableName+" on (") to sFromTables
-                    Send _SQL_OuterLeftJoin_AddSegments stQ hoTQ (&sFromTables) iItem
-                    Move (sFromTables+")") to sFromTables
-                End
-            Loop
-            Function_Return sFromTables
-        End_Function
-
-        Function _SQL_InnerJoins tTableQuery stQ Integer hoTQ Returns String
-            Integer iItem iItemMax
-            String sFromTables sTableName
-
-            Move (SizeOfArray(stQ.aTableRelations)-1) to iItemMax
-            For iItem from 0 to iItemMax
-                If (stQ.aTableRelations[iItem].bInnerJoin) Begin
-                    Get _SQL_TableName stQ hoTQ stQ.aTableRelations[iItem].iTargetTable to sTableName
-                    Move (sFromTables+" inner join"*sTableName+" on (") to sFromTables
-                    Send _SQL_OuterLeftJoin_AddSegments stQ hoTQ (&sFromTables) iItem
-                    Move (sFromTables+")") to sFromTables
-                End
-            Loop
-            Function_Return sFromTables
-        End_Function
-
-            Function _SQL_WhereClauseComperator Integer iComp Boolean bIn Boolean bNotIn Returns String
-                If (bIn) Begin
-                    Function_Return " in "
-                End
-                If (bNotIn) Begin
-                    Function_Return " not in "
-                End
-                If (iComp=tqLT) Begin
+            Function _TQCompToSqlComp Integer iTQComp Returns String
+                If (iTQComp=tqLT) Begin
                     Function_Return "<"
                 End
-                If (iComp=tqLE) Begin
+                If (iTQComp=tqLE) Begin
                     Function_Return "<="
                 End
-                If (iComp=tqEQ) Begin
+                If (iTQComp=tqEQ) Begin
                     Function_Return "="
                 End
-                If (iComp=tqGE) Begin
+                If (iTQComp=tqGE) Begin
                     Function_Return ">="
                 End
-                If (iComp=tqGT) Begin
+                If (iTQComp=tqGT) Begin
                     Function_Return ">"
                 End
-                If (iComp=tqNE) Begin
+                If (iTQComp=tqNE) Begin
                     Function_Return "<>"
                 End
-                If (iComp=tqMATCH) Begin
-                    Function_Return " like " // This can't be guaranteed on SQL. or what?
+                If (iTQComp=tqMATCH) Begin
+                    Function_Return "like" // This can't be guaranteed on SQL. or what?
                 End
-                If (iComp=tqUCMATCH) Begin
-                    Function_Return " like "
+                If (iTQComp=tqUCMATCH) Begin
+                    Function_Return "like"
                 End
-//                If (iComp=tqCONTAINS) Function_Return "contains"
-                Function_Return "error"
-            End_Function
-
-                Function EscapeStringConstant String sValue Returns String
-                    Function_Return (Replaces("'",sValue,"''")) // cross fingers
-                End_Function
-
-            Function _SQL_WhereClauseValue tTableQuery stQ Integer hoTQ Integer iComp _tTQValueSource stValue Returns String
-                // This function may not be called with SizeOfArray(stValue.aSymbols)>0
-                Boolean bFixed bDoValue
-                Integer iMax iItem
-                String sValue sColumnName sSQLdate
-                
-                If (iComp=tqEQ and SizeOfArray(stValue.aOrList)<>0) Begin // IN LIST
-                    Move (SizeOfArray(stValue.aOrList)-1) to iMax
-                    Move "(" to sValue
-                    For iItem from 0 to iMax
-
-                        If (iItem>0) Begin
-                            Move (sValue+",") to sValue
-                        End
-
-                        If (stValue.iType=tqSTRING or stValue.iType=tqTEXT) Begin
-                            Move (sValue+"'"+EscapeStringConstant(Self,stValue.aOrList[iItem])+"'") to sValue
-                        End
-                        Else If (stValue.iType=tqDATE or stValue.iType=tqDATETIME) Begin
-                            Get DFDateToSQLDate of stQ._stControlBlock.stSQLStatementHandle.hStatHandle (Date(stValue.aOrList[iItem])) to sSQLdate
-                            Move (sValue+"'"+sSQLdate+"'") to sValue
-                        End
-                        Else Begin
-                            Move (sValue+stValue.aOrList[iItem]) to sValue
-                        End
-                    Loop
-                    Move (sValue+")") to sValue
-                End
-                Else If (iComp=tqNE and SizeOfArray(stValue.aOrList)<>0) Begin // NOT IN LIST
-                    // NOT IN 
-                    Error DFERR_PROGRAM "Missing handler for not-in-list"
-                    // MUST BE IMPLEMENTET
-                End
-                Else Begin
-                    Move True to bDoValue
-                    If (stValue.iTable<>0) Begin
-                        Get _IsTableFixed of hoTQ stQ stValue.iTable to bFixed
-                        If (not(bFixed)) Begin
-                            Get _SQL_ColumnName stQ hoTQ stValue.iTable stValue.iColumn to sColumnName
-                            Move sColumnName to sValue
-                            Move False to bDoValue
-                        End
-                    End
-                    If (bDoValue) Begin // Either it's a constant or it's a fixed table:
-                        Get _ValueSourceValue of hoTQ (&stQ) stValue to sValue
-
-                        If (iComp=tqMATCH or iComp=tqUCMATCH) Begin
-                            Move (Replaces("%",sValue,"\%")) to sValue // Escape all SQL wildcard patterns
-                            Move (Replaces("_",sValue,"\_")) to sValue // that happens to be in the string
-                            Move (Replaces("[",sValue,"\[")) to sValue // by chance.
-                            Move (Replaces("]",sValue,"\]")) to sValue
-                            Move (Replaces("*",sValue,"%")) to sValue  // Replace our own * and ? wildcards
-                            Move (Replaces("?",sValue,"_")) to sValue  // with their SQL counterparts.
-                            If (iComp=tqUCMATCH) Begin
-                                Move (Uppercase(sValue)) to sValue
-                            End
-                        End
-
-                        If (stValue.iType=tqSTRING or stValue.iType=tqTEXT) Begin
-                            Move ("'"+EscapeStringConstant(Self,sValue)+"'") to sValue
-                        End
-                        Else If (stValue.iType=tqDATE or stValue.iType=tqDATETIME) Begin
-                            Get DFDateToSQLDate of stQ._stControlBlock.stSQLStatementHandle.hStatHandle (Date(sValue)) to sValue
-                            Move ("'"+sValue+"'") to sValue
-                        End
-
-                        If (iComp=tqMATCH or iComp=tqUCMATCH) Begin
-                            Move (sValue*"ESCAPE '\'") to sValue // tell mssql that the pattern has been escaped with the "\" character.
-                        End
-                    End
-                End
-                Function_Return sValue
+                Function_Return ("err")
             End_Function
             
-                Function _SQL_WhereClauseExpressionSegment tTableQuery stQ tTQFilterSegment strSegment Integer hoTQ Returns String
-                    Integer iItem iMax
-                    Integer hoExprParser
-                    Integer[] aLegalTables // For expressions
-                    tXPGrammar stGrammar
-                    tXPError stError
-                    tXPToken[] aSymbols
-                    String sSqlExpr sColumName sValue
-                    
-                    Get phoExprParser to hoExprParser
-                    
-                    Get LegalExpressionTables stQ to aLegalTables
-                    Set paAllowedTables of hoExprParser to aLegalTables
-                    
-                    Get NewGrammar of hoExprParser to stGrammar
-                    Get TokenizeString of hoExprParser stGrammar strSegment.stRightValue.sConstant (&stError) to aSymbols
-                    
-                    Move (SizeOfArray(aSymbols)-1) to iMax
-                    For iItem from 0 to iMax
-                        // If it's a table.column
-                        If (aSymbols[iItem].iType=XPTokenType_Symbol and aSymbols[iItem].stValueHint.iTable<>0) Begin
-                            Get _SQL_ColumnName stQ hoTQ aSymbols[iItem].stValueHint.iTable aSymbols[iItem].stValueHint.iColumn to sColumName
-                            Move (sSqlExpr*sColumName) to sSqlExpr
-                        End
-                        Else If (aSymbols[iItem].iType=XPTokenType_StringConstant) Begin // If it's a string constant    
-
-                            Move ("'"+EscapeStringConstant(Self,aSymbols[iItem].sValue)+"'") to sValue
-                            Move (sSqlExpr*sValue) to sSqlExpr
-                        End
-                        Else Begin
-                            Move (sSqlExpr*aSymbols[iItem].sValue) to sSqlExpr
-                        End
-                    Loop
-                    
-                    Function_Return ("("+sSqlExpr+")")
-                End_Function
-
-            Function _SQL_WhereClauseSegment tTableQuery stQ tTQFilterSegment strSegment Integer hoTQ Returns String
-                Integer iTable iColumn
-                Boolean bIn bNotIn
-                String sValue
-                
-                If (SizeOfArray(strSegment.stRightValue.aSymbols)>0) Begin // It's an expression
-                    Get _SQL_WhereClauseExpressionSegment stQ strSegment hoTQ to sValue
+            Function _TQTypeToSqlType Integer iTQType Returns Integer 
+                If (iTQType=tqSTRING) Begin
+                    Function_Return typeString
                 End
-                Else Begin
-                    Move strSegment.stLeftValue.iTable to iTable
-                    Move strSegment.stLeftValue.iColumn to iColumn
-                    Get _SQL_ColumnName stQ hoTQ iTable iColumn to sValue
-    
-                    If (strSegment.iComp=tqEQ) Begin
-                        Move (SizeOfArray(strSegment.stRightValue.aOrList)<>0) to bIn
-                        Move (sValue+_SQL_WhereClauseComperator(Self,strSegment.iComp,bIn,False)) to sValue
-                    End
-                    If (strSegment.iComp=tqNE) Begin
-                        Move (SizeOfArray(strSegment.stRightValue.aOrList)<>0) to bNotIn
-                        Move (sValue+_SQL_WhereClauseComperator(Self,strSegment.iComp,False,bNotIn)) to sValue
-                    End
-
-                    Move (sValue+_SQL_WhereClauseValue(Self,stQ,hoTQ,strSegment.iComp,strSegment.stRightValue)) to sValue
+                If (iTQType=tqNUMBER) Begin  
+                    Function_Return typeNumber
+                End                    
+                If (iTQType=tqTEXT) Begin    
+                    Function_Return typeString
                 End
-
-                Function_Return sValue
+                If (iTQType=tqDATE) Begin
+                    Function_Return typeDate
+                End
+                If (iTQType=tqDATETIME) Begin
+                    Function_Return typeDateTime
+                End
+                Function_Return typeString
             End_Function
 
-        Function _SQL_WhereClause tTableQuery stQ Integer hoTQ Returns String
+            Procedure _AddSqlFilterSegment tTableQuery stQ tSqlStmt ByRef stStmt Integer iFilterIndex
+                Integer iTable iColumn iSqlType 
+                String sSqlArray sFilter
+                String[] aOperands
+                tTQFilterSegment stFilterSegment
+
+                Move stQ.aFilters[iFilterIndex] to stFilterSegment
+                
+                If (SizeOfArray(stFilterSegment.stRightValue.aSymbols)>0) Begin // It's an expression
+                    // ToDo: Handle expressions
+//                    Get _SQL_WhereClauseExpressionSegment stQ stFilterSegment hoTQ to sValue
+                End
+                Else Begin
+                    Move stFilterSegment.stLeftValue.iTable to iTable
+                    Move stFilterSegment.stLeftValue.iColumn to iColumn
+                    
+                    If ((stFilterSegment.iComp=tqEQ or stFilterSegment.iComp=tqNE) and SizeOfArray(stFilterSegment.stRightValue.aOrList)<>0) Begin
+                        // It's 'in' or 'not in'
+                        Get _TQTypeToSqlType stFilterSegment.stLeftValue.iType to iSqlType
+                        Get SqlArray stFilterSegment.stRightValue.aOrList iSqlType to sSqlArray
+                    
+                        Send AddStmtFilterExpr (&stStmt) iTable iColumn "in"
+                        Get SqlFilterColumnExpr iTable iColumn "in" sSqlArray to sFilter
+                            
+                        If (stFilterSegment.iComp=tqNE) Begin // not in => flip the filter
+                            Send PushOperandExpr (&aOperands) sFilter
+                            Send ApplyOperator (&aOperands) "not"
+                            Get TopOperand aOperands to sFilter
+                        End
+                        
+                        Send AddStmtFilterExpr (&stStmt) sFilter
+                    End
+                    Else Begin
+                        Send AddStmtFilter (&stStmt) iTable iColumn (_TQCompToSqlComp(Self,stFilterSegment.iComp)) stFilterSegment.stRightValue.sConstant
+                    End
+                End
+            End_Procedure
+            
+        Procedure _AddSqlFilters tTableQuery stQ tSqlStmt ByRef stStmt
             Integer iMax iItem
-            Boolean bAddAND
             String sValue
             Move (SizeOfArray(stQ.aFilters)-1) to iMax
-// ToDo: This needs to take care of expressions someday
             For iItem from 0 to iMax
-                If (iItem<>0) Begin
-                    Move (sValue*"and") to sValue
-                End
-                Move (sValue*_SQL_WhereClauseSegment(Self,stQ,stQ.aFilters[iItem],hoTQ)) to sValue
+                Send _AddSqlFilterSegment stQ (&stStmt) iItem
             Loop
             Function_Return sValue
-        End_Function
+        End_Procedure
 
-        Function _SQL_OrderByClause tTableQuery stQ Integer hoTQ Returns String
+        Procedure _AddSqlJoins tTableQuery stQ tSqlStmt ByRef stStmt
+            Integer iItem iMax
+            Integer iSegment iSegmentMax
+            String sFromTables sTableName
+
+            Move (SizeOfArray(stQ.aTableRelations)-1) to iMax
+            For iItem from 0 to iMax
+                If (not(stQ.aTableRelations[iItem].bFixed)) Begin
+                    Send AddStmtJoin (&stStmt) (SqlTableName(Self,stQ.aTableRelations[iItem].iTargetTable)) C_SQL_LEFT_JOIN
+                    Move (SizeOfArray(stQ.aTableRelations[iItem].aSegments)-1) to iSegmentMax
+                    For iSegment from 0 to iSegmentMax
+                        Send AddStmtJoinSegment (&stStmt) stQ.aTableRelations[iItem].aSegments[iSegment].iSourceTable stQ.aTableRelations[iItem].aSegments[iSegment].iSourceColumn stQ.aTableRelations[iItem].iTargetTable stQ.aTableRelations[iItem].aSegments[iSegment].iTargetColumn
+                    Loop
+                End
+            Loop
+            Function_Return sFromTables
+        End_Procedure
+
+        Procedure _AddSqlOrder tTableQuery stQ tSqlStmt ByRef stStmt
             Integer iItem iMax iTable iColumn
             String sValue sColumnName
             Move (SizeOfArray(stQ.aOrdering)-1) to iMax
             For iItem from 0 to iMax
-                If (iItem<>0) Begin
-                    Move (sValue+", ") to sValue
-                End
                 
                 // OBS! Here we need expression handling
                 
                 Move stQ.aOrdering[iItem].stValueSource.iTable to iTable
                 Move stQ.aOrdering[iItem].stValueSource.iColumn to iColumn
-                Get _SQL_ColumnName stQ hoTQ iTable iColumn to sColumnName
-                Move (sValue+sColumnName) to sValue
-                If (stQ.aOrdering[iItem].stValueSource.iType=tqSTRING) Begin
-                    Move (sValue+" collate "+psCollation(Self)) to sValue
-                End
-                If (stQ.aOrdering[iItem].bDescending) Begin
-                    Move (sValue*"DESC") to sValue
-                End
+                Send AddStmtOrderBy (&stStmt) iTable iColumn stQ.aOrdering[iItem].bDescending
+//
+//                Move (sValue+sColumnName) to sValue
+//                If (stQ.aOrdering[iItem].stValueSource.iType=tqSTRING) Begin
+//                    Move (sValue+" collate "+psCollation(Self)) to sValue
+//                End
+//                If (stQ.aOrdering[iItem].bDescending) Begin
+//                    Move (sValue*"DESC") to sValue
+//                End
                 // ToDo: uppercase ordering
 //                If (stQ.aOrdering[iItem].bUppercase=1) Begin
 //                    // Somethings wrong here. And it's not the 'lower' instead of 'upper'
 //                    Move (sValue*"lower("+sValue+")") to sValue
 //                End
             Loop
-            Function_Return sValue
-        End_Function
-
-    Function _SQLSelectStatement tTableQuery stQ Integer hoTQ Returns String
-        String sStatement
-
-        Move "select" to sStatement
+        End_Procedure
+        
+    Function TableQueryToStmt tTableQuery stQ Returns tSqlStmt
+        Integer iItem iMax
+        tSqlStmt stStmt
+        
+        Get NewStmt (SqlTableName(Self,stQ.iTable)) to stStmt
 
         If (stQ.iLimit>0) Begin
-            Move (sStatement*"top "+String(stQ.iLimit)) to sStatement
+            Move stQ.iLimit to stStmt.iTop
         End
         If (stQ.iLimit<0) Begin
-            Move (sStatement*"bottom "+String(0-stQ.iLimit)) to sStatement
+            Error DFERR_PROGRAM "Table query can not handle negative 'top' setting"
         End
 
-        Move (sStatement*_SQL_SelectColumns(Self,stQ,hoTQ)) to sStatement
-
-        Move (sStatement*" from") to sStatement
-
-        Move (sStatement*_SQL_OuterLeftJoins(Self,stQ,hoTQ)) to sStatement // related records
-
-        Move (sStatement*_SQL_InnerJoins(Self,stQ,hoTQ)) to sStatement // find child records for each parent
-
-        If (SizeOfArray(stQ.aFilters)<>0) Begin
-            Move (sStatement*" where") to sStatement
-            Move (sStatement*_SQL_WhereClause(Self,stQ,hoTQ)) to sStatement
-        End
-        If (SizeOfArray(stQ.aOrdering)<>0) Begin
-            Move (sStatement*" order by") to sStatement
-            Move (sStatement*_SQL_OrderByClause(Self,stQ,hoTQ)) to sStatement
-        End
-        Function_Return sStatement
+        Send _AddSqlJoins stQ (&stStmt)
+        Send _AddSqlColumns stQ (&stStmt)
+        Send _AddSqlFilters stQ (&stStmt)
+        Send _AddSqlOrder stQ (&stStmt)
+//
+//        Move (sStatement*_SQL_SelectColumns(Self,stQ,hoTQ)) to sStatement
+        
+        Function_Return stStmt
     End_Function
 
-    Function _SQLDeleteStatement tTableQuery stQ Integer hoTQ Returns String
-        String sStatement
-
-        Move "delete" to sStatement
-
-//        If (stQ.iLimit<>0) Begin
-//            Send OnError 742 "Limit not allowed on delete statement"
-//            Function_Return "" // Error
-//        End
-//        
-//        If (SizeOfArray(stQ.aColumnSources)>0) Begin
-//            Send OnError 743 "Result column not allowed on delete statement"
-//            Function_Return "" // Error
-//        End
-
-        Move (sStatement*" from") to sStatement
-
-        Move (sStatement*_SQL_OuterLeftJoins(Self,stQ,hoTQ)) to sStatement // related records
-
-        Move (sStatement*_SQL_InnerJoins(Self,stQ,hoTQ)) to sStatement // find child records for each parent
-
-        If (SizeOfArray(stQ.aFilters)<>0) Begin
-            Move (sStatement*" where") to sStatement
-            Move (sStatement*_SQL_WhereClause(Self,stQ,hoTQ)) to sStatement
-        End
-
-//        If (SizeOfArray(stQ.aOrdering)>0) Begin
-//            Send OnError 744 "Ordering not allowed on delete statement"
-//            Function_Return "" // Error
-//        End
-
-        Function_Return sStatement
+    Function TableQuerySelectStatement tTableQuery stQ Returns String
+        String sSql
+        tSqlStmt stStmt
+        Get TableQueryToStmt stQ to stStmt
+        Get StmtToString stStmt to sSql
+        Function_Return sSql
     End_Function
 End_Class
+
+//Class cTableQuerySQL is a cObject // Generates an SQL statement
+//    Procedure Construct_Object
+//        Forward Send Construct_Object
+//        Property String psCollation "Latin1_General_BIN" // Or maybe "SQL_Latin1_CP850_BIN"? Who knows?
+//    End_Procedure
+//
+//        Function _SQL_ColumnName tTableQuery stQ Integer hoTQ Integer iTable Integer iColumn Returns String
+//            String sValue
+//            Get ColumnName of hoTQ stQ iTable iColumn True to sValue
+//            Function_Return sValue
+//        End_Function
+//
+//        Function _SQL_TableName tTableQuery stQ Integer hoTQ Integer iTable Returns String
+//            String sValue
+//            Get TableName of hoTQ stQ iTable to sValue
+//            Move ("["+sValue+"]") to sValue
+//            Function_Return sValue
+//        End_Function
+//        
+//                    Function _SQL_EscapeQuote String sValue Returns String
+//                        Function_Return (Replaces("'",sValue,"char(39)"))
+//                    End_Function
+//                
+//                Function _SQL_ExpressionToken tTableQuery stQ Integer hoTQ tXPGrammar stGrammar tXPToken stToken Boolean ByRef bError Returns String
+//                    Move False to bError
+//                    String sValue
+//                    If (stToken.iType=XPTokenType_Error) Begin
+//                        Move True to bError
+//                        Function_Return ""
+//                    End
+//                    Else If (stToken.iType=XPTokenType_Operator) Begin
+//                        Function_Return stGrammar.aOperators[stToken.iOperatorIndex].sSymbol
+//                    End
+//                    Else If (stToken.iType=XPTokenType_Symbol) Begin
+//                        Function_Return stToken.sValue
+//                    End
+//                    Else If (stToken.iType=XPTokenType_FunctionCall) Begin
+//                        Function_Return stGrammar.aFunctions[stToken.iOperatorIndex].sFunction
+//                    End
+//                    Else If (stToken.iType=XPTokenType_NewParameter) Begin
+//                        Function_Return ","
+//                    End
+//                    Else If (stToken.iType=XPTokenType_EndFunctionCall) Begin
+//                        Function_Return ")"
+//                    End
+//                    Else If (stToken.iType=XPTokenType_StringConstant) Begin
+//                        Get _SQL_EscapeQuote stToken.sValue to sValue
+//                        Function_Return ("'"+sValue+"'")
+//                    End
+//                    Else If (stToken.iType=XPTokenType_NumberConstant) Begin
+//                        Function_Return stToken.sValue
+//                    End
+//                    Else If (stToken.iType=XPTokenType_IntegerConstant) Begin
+//                        Function_Return stToken.sValue
+//                    End
+//                    Else If (stToken.iType=XPTokenType_LeftParenthesis) Begin
+//                        Function_Return "("
+//                    End
+//                    Else If (stToken.iType=XPTokenType_RightParenthesis) Begin
+//                        Function_Return ")"
+//                    End
+//                    Move True to bError
+//                    Function_Return ""
+//                End_Function
+//            
+//            Function _SQL_Expression tTableQuery stQ Integer hoTQ String sExpression Returns String
+//                Boolean bError
+//                Integer iMax iItem
+//                Integer hoExprParser
+//                Integer[] aLegalTables // For expressions
+//                String sSqlExpr sAtom
+//                tXPGrammar stGrammar
+//                tXPError stError
+//                tXPToken[] aSymbols
+//                
+//                Get phoExprParser to hoExprParser
+//                
+//                Get LegalExpressionTables stQ to aLegalTables
+//                Set paAllowedTables of hoExprParser to aLegalTables
+//                
+//                Get NewGrammar of hoExprParser to stGrammar
+//                Get TokenizeString of hoExprParser stGrammar sExpression (&stError) to aSymbols
+//                
+//                If (stError.sErrorText="" and SizeOfArray(aSymbols)>0) Begin
+//                    Move "" to sSqlExpr
+//                    Move (SizeOfArray(aSymbols)-1) to iMax
+//                    
+//                    For iItem from 0 to iMax
+//                        Get _SQL_ExpressionToken stQ hoTQ stGrammar aSymbols[iItem] (&bError) to sAtom
+//                        If (not(bError)) Begin
+//                            Move (sSqlExpr+sAtom) to sSqlExpr
+//                        End
+//                        Else Begin
+//                            Function_Return "expression-error"
+//                        End
+//                    Loop
+//                    Function_Return sSqlExpr
+//                End
+//                Function_Return "expression-error"
+//            End_Function
+//
+//        Function _SQL_SelectColumns tTableQuery stQ Integer hoTQ Returns String
+//            Integer iMax iItem iTable iColumn
+//            Integer iFieldType iLength
+//            String sColumnList sColumnName sTableName
+//            Move (SizeOfArray(stQ.aColumnSources)-1) to iMax
+//            If (iMax>=0) Begin
+//                For iItem from 0 to iMax
+//                    Move stQ.aColumnSources[iItem].iTable to iTable
+//                    Move stQ.aColumnSources[iItem].iColumn to iColumn
+//                    
+//                    If (iTable>0) Begin // Tt's not an expression
+//                        If (iItem<>0) Begin
+//                            Move (sColumnList+",") to sColumnList
+//                        End
+//    
+//                        If (iColumn<>0) Begin
+//                            Get _SQL_ColumnName stQ hoTQ iTable iColumn to sColumnName
+//                            Get_Attribute DF_FIELD_TYPE of iTable iColumn to iFieldType
+//                            If (iFieldType=DF_TEXT) Begin
+//                                Get_Attribute DF_FIELD_NATIVE_LENGTH of iTable iColumn to iLength
+//                                If (iLength>8000) Begin
+//                                    Move ("LEFT("+sColumnName+",20)") to sColumnName
+//                                End
+//                            End
+//                        End
+//                        Else Begin
+//                            Get TableName of hoTQ stQ iTable to sTableName
+//                            Move (sTableName+".*") to sColumnName
+//                        End
+//                        Move (sColumnList+sColumnName) to sColumnList
+//                    End
+//                    Else If (SizeOfArray(stQ.aColumnSources[iItem].aSymbols)>0) Begin 
+//                        // It is an expression
+//                        If (iItem<>0) Begin
+//                            Move (sColumnList+",") to sColumnList
+//                        End
+//
+//                        Move stQ.aColumnSources[iItem].sConstant to sColumnName
+//                        Get _SQL_Expression stQ hoTQ sColumnName to sColumnName
+//                        Move (sColumnList+sColumnName) to sColumnList
+//                    End
+//                Loop
+//            End
+//            Else Begin
+//                Move "*" to sColumnList
+//            End
+//            Function_Return sColumnList
+//        End_Function
+//
+//            Procedure _SQL_OuterLeftJoin_AddSegments tTableQuery stQ Integer hoTQ String ByRef sFromTables Integer iRelateItem
+//                Integer iItem iItemMax
+//                String sColumnName sComp
+//                tTQTableRelation strRelation
+//                Move stQ.aTableRelations[iRelateItem] to strRelation
+//                Move (SizeOfArray(strRelation.aSegments)-1) to iItemMax
+//                For iItem from 0 to iItemMax
+//                    If (iItem<>0) Begin
+//                        Move (sFromTables+" AND") to sFromTables
+//                    End
+//                    Get _SQL_ColumnName stQ hoTQ strRelation.aSegments[iItem].iSourceTable strRelation.aSegments[iItem].iSourceColumn to sColumnName
+//                    Move (sFromTables*sColumnName) to sFromTables
+//
+//                    Get _SQL_WhereClauseComperator strRelation.aSegments[iItem].iInnerJoinComp False False to sComp
+//                    Move (sFromTables*sComp) to sFromTables
+//
+//                    Get _SQL_ColumnName stQ hoTQ strRelation.iTargetTable strRelation.aSegments[iItem].iTargetColumn to sColumnName
+//                    Move (sFromTables*sColumnName) to sFromTables
+//                Loop
+//            End_Procedure
+//
+//            //select f.foo
+//            //     , b.bar
+//            //     , q.qux
+//            //  from footable as f
+//            //left outer
+//            //  join bartable as b
+//            //    on f.id = b.fid
+//            //left outer
+//            //  join quxtable as q
+//            //    on b.id = q.bid
+//
+//        Function _SQL_OuterLeftJoins tTableQuery stQ Integer hoTQ Returns String
+//            Integer iItem iItemMax
+//            String sFromTables sTableName
+//            Get TableName of hoTQ stQ stQ.iTable to sFromTables
+//
+//            Move (SizeOfArray(stQ.aTableRelations)-1) to iItemMax
+//            For iItem from 0 to iItemMax
+//                If (not(stQ.aTableRelations[iItem].bFixed)) Begin
+//                    Get _SQL_TableName stQ hoTQ stQ.aTableRelations[iItem].iTargetTable to sTableName
+//                    Move (sFromTables+" left outer join"*sTableName+" on (") to sFromTables
+//                    Send _SQL_OuterLeftJoin_AddSegments stQ hoTQ (&sFromTables) iItem
+//                    Move (sFromTables+")") to sFromTables
+//                End
+//            Loop
+//            Function_Return sFromTables
+//        End_Function
+//
+//        Function _SQL_InnerJoins tTableQuery stQ Integer hoTQ Returns String
+//            Integer iItem iItemMax
+//            String sFromTables sTableName
+//
+//            Move (SizeOfArray(stQ.aTableRelations)-1) to iItemMax
+//            For iItem from 0 to iItemMax
+//                If (stQ.aTableRelations[iItem].bInnerJoin) Begin
+//                    Get _SQL_TableName stQ hoTQ stQ.aTableRelations[iItem].iTargetTable to sTableName
+//                    Move (sFromTables+" inner join"*sTableName+" on (") to sFromTables
+//                    Send _SQL_OuterLeftJoin_AddSegments stQ hoTQ (&sFromTables) iItem
+//                    Move (sFromTables+")") to sFromTables
+//                End
+//            Loop
+//            Function_Return sFromTables
+//        End_Function
+//
+//            Function _SQL_WhereClauseComperator Integer iComp Boolean bIn Boolean bNotIn Returns String
+//                If (bIn) Begin
+//                    Function_Return " in "
+//                End
+//                If (bNotIn) Begin
+//                    Function_Return " not in "
+//                End
+//                If (iComp=tqLT) Begin
+//                    Function_Return "<"
+//                End
+//                If (iComp=tqLE) Begin
+//                    Function_Return "<="
+//                End
+//                If (iComp=tqEQ) Begin
+//                    Function_Return "="
+//                End
+//                If (iComp=tqGE) Begin
+//                    Function_Return ">="
+//                End
+//                If (iComp=tqGT) Begin
+//                    Function_Return ">"
+//                End
+//                If (iComp=tqNE) Begin
+//                    Function_Return "<>"
+//                End
+//                If (iComp=tqMATCH) Begin
+//                    Function_Return " like " // This can't be guaranteed on SQL. or what?
+//                End
+//                If (iComp=tqUCMATCH) Begin
+//                    Function_Return " like "
+//                End
+////                If (iComp=tqCONTAINS) Function_Return "contains"
+//                Function_Return "error"
+//            End_Function
+//
+//                Function EscapeStringConstant String sValue Returns String
+//                    Function_Return (Replaces("'",sValue,"''")) // cross fingers
+//                End_Function
+//
+//            Function _SQL_WhereClauseValue tTableQuery stQ Integer hoTQ Integer iComp _tTQValueSource stValue Returns String
+//                // This function may not be called with SizeOfArray(stValue.aSymbols)>0
+//                Boolean bFixed bDoValue
+//                Integer iMax iItem
+//                String sValue sColumnName sSQLdate
+//                
+//                If (iComp=tqEQ and SizeOfArray(stValue.aOrList)<>0) Begin // IN LIST
+//                    Move (SizeOfArray(stValue.aOrList)-1) to iMax
+//                    Move "(" to sValue
+//                    For iItem from 0 to iMax
+//
+//                        If (iItem>0) Begin
+//                            Move (sValue+",") to sValue
+//                        End
+//
+//                        If (stValue.iType=tqSTRING or stValue.iType=tqTEXT) Begin
+//                            Move (sValue+"'"+EscapeStringConstant(Self,stValue.aOrList[iItem])+"'") to sValue
+//                        End
+//                        Else If (stValue.iType=tqDATE or stValue.iType=tqDATETIME) Begin
+//                            Get DFDateToSQLDate of stQ._stControlBlock.stSQLStatementHandle.hStatHandle (Date(stValue.aOrList[iItem])) to sSQLdate
+//                            Move (sValue+"'"+sSQLdate+"'") to sValue
+//                        End
+//                        Else Begin
+//                            Move (sValue+stValue.aOrList[iItem]) to sValue
+//                        End
+//                    Loop
+//                    Move (sValue+")") to sValue
+//                End
+//                Else If (iComp=tqNE and SizeOfArray(stValue.aOrList)<>0) Begin // NOT IN LIST
+//                    // NOT IN 
+//                    Error DFERR_PROGRAM "Missing handler for not-in-list"
+//                    // MUST BE IMPLEMENTET
+//                End
+//                Else Begin
+//                    Move True to bDoValue
+//                    If (stValue.iTable<>0) Begin
+//                        Get _IsTableFixed of hoTQ stQ stValue.iTable to bFixed
+//                        If (not(bFixed)) Begin
+//                            Get _SQL_ColumnName stQ hoTQ stValue.iTable stValue.iColumn to sColumnName
+//                            Move sColumnName to sValue
+//                            Move False to bDoValue
+//                        End
+//                    End
+//                    If (bDoValue) Begin // Either it's a constant or it's a fixed table:
+//                        Get _ValueSourceValue of hoTQ (&stQ) stValue to sValue
+//
+//                        If (iComp=tqMATCH or iComp=tqUCMATCH) Begin
+//                            Move (Replaces("%",sValue,"\%")) to sValue // Escape all SQL wildcard patterns
+//                            Move (Replaces("_",sValue,"\_")) to sValue // that happens to be in the string
+//                            Move (Replaces("[",sValue,"\[")) to sValue // by chance.
+//                            Move (Replaces("]",sValue,"\]")) to sValue
+//                            Move (Replaces("*",sValue,"%")) to sValue  // Replace our own * and ? wildcards
+//                            Move (Replaces("?",sValue,"_")) to sValue  // with their SQL counterparts.
+//                            If (iComp=tqUCMATCH) Begin
+//                                Move (Uppercase(sValue)) to sValue
+//                            End
+//                        End
+//
+//                        If (stValue.iType=tqSTRING or stValue.iType=tqTEXT) Begin
+//                            Move ("'"+EscapeStringConstant(Self,sValue)+"'") to sValue
+//                        End
+//                        Else If (stValue.iType=tqDATE or stValue.iType=tqDATETIME) Begin
+//                            Get DFDateToSQLDate of stQ._stControlBlock.stSQLStatementHandle.hStatHandle (Date(sValue)) to sValue
+//                            Move ("'"+sValue+"'") to sValue
+//                        End
+//
+//                        If (iComp=tqMATCH or iComp=tqUCMATCH) Begin
+//                            Move (sValue*"ESCAPE '\'") to sValue // tell mssql that the pattern has been escaped with the "\" character.
+//                        End
+//                    End
+//                End
+//                Function_Return sValue
+//            End_Function
+//            
+//                Function _SQL_WhereClauseExpressionSegment tTableQuery stQ tTQFilterSegment stSegment Integer hoTQ Returns String
+//                    Integer iItem iMax
+//                    Integer hoExprParser
+//                    Integer[] aLegalTables // For expressions
+//                    tXPGrammar stGrammar
+//                    tXPError stError
+//                    tXPToken[] aSymbols
+//                    String sSqlExpr sColumName sValue
+//                    
+//                    Get phoExprParser to hoExprParser
+//                    
+//                    Get LegalExpressionTables stQ to aLegalTables
+//                    Set paAllowedTables of hoExprParser to aLegalTables
+//                    
+//                    Get NewGrammar of hoExprParser to stGrammar
+//                    Get TokenizeString of hoExprParser stGrammar stSegment.stRightValue.sConstant (&stError) to aSymbols
+//                    
+//                    Move (SizeOfArray(aSymbols)-1) to iMax
+//                    For iItem from 0 to iMax
+//                        // If it's a table.column
+//                        If (aSymbols[iItem].iType=XPTokenType_Symbol and aSymbols[iItem].stValueHint.iTable<>0) Begin
+//                            Get _SQL_ColumnName stQ hoTQ aSymbols[iItem].stValueHint.iTable aSymbols[iItem].stValueHint.iColumn to sColumName
+//                            Move (sSqlExpr*sColumName) to sSqlExpr
+//                        End
+//                        Else If (aSymbols[iItem].iType=XPTokenType_StringConstant) Begin // If it's a string constant    
+//
+//                            Move ("'"+EscapeStringConstant(Self,aSymbols[iItem].sValue)+"'") to sValue
+//                            Move (sSqlExpr*sValue) to sSqlExpr
+//                        End
+//                        Else Begin
+//                            Move (sSqlExpr*aSymbols[iItem].sValue) to sSqlExpr
+//                        End
+//                    Loop
+//                    
+//                    Function_Return ("("+sSqlExpr+")")
+//                End_Function
+//
+//            Function _SQL_WhereClauseSegment tTableQuery stQ tTQFilterSegment stSegment Integer hoTQ Returns String
+//                Integer iTable iColumn
+//                Boolean bIn bNotIn
+//                String sValue
+//                
+//                If (SizeOfArray(stSegment.stRightValue.aSymbols)>0) Begin // It's an expression
+//                    Get _SQL_WhereClauseExpressionSegment stQ stSegment hoTQ to sValue
+//                End
+//                Else Begin
+//                    Move stSegment.stLeftValue.iTable to iTable
+//                    Move stSegment.stLeftValue.iColumn to iColumn
+//                    Get _SQL_ColumnName stQ hoTQ iTable iColumn to sValue
+//    
+//                    If (stSegment.iComp=tqEQ) Begin
+//                        Move (SizeOfArray(stSegment.stRightValue.aOrList)<>0) to bIn
+//                        Move (sValue+_SQL_WhereClauseComperator(Self,stSegment.iComp,bIn,False)) to sValue
+//                    End
+//                    If (stSegment.iComp=tqNE) Begin
+//                        Move (SizeOfArray(stSegment.stRightValue.aOrList)<>0) to bNotIn
+//                        Move (sValue+_SQL_WhereClauseComperator(Self,stSegment.iComp,False,bNotIn)) to sValue
+//                    End
+//
+//                    Move (sValue+_SQL_WhereClauseValue(Self,stQ,hoTQ,stSegment.iComp,stSegment.stRightValue)) to sValue
+//                End
+//
+//                Function_Return sValue
+//            End_Function
+//
+//        Function _SQL_WhereClause tTableQuery stQ Integer hoTQ Returns String
+//            Integer iMax iItem
+//            Boolean bAddAND
+//            String sValue
+//            Move (SizeOfArray(stQ.aFilters)-1) to iMax
+//// ToDo: This needs to take care of expressions someday
+//            For iItem from 0 to iMax
+//                If (iItem<>0) Begin
+//                    Move (sValue*"and") to sValue
+//                End
+//                Move (sValue*_SQL_WhereClauseSegment(Self,stQ,stQ.aFilters[iItem],hoTQ)) to sValue
+//            Loop
+//            Function_Return sValue
+//        End_Function
+//
+//        Function _SQL_OrderByClause tTableQuery stQ Integer hoTQ Returns String
+//            Integer iItem iMax iTable iColumn
+//            String sValue sColumnName
+//            Move (SizeOfArray(stQ.aOrdering)-1) to iMax
+//            For iItem from 0 to iMax
+//                If (iItem<>0) Begin
+//                    Move (sValue+", ") to sValue
+//                End
+//                
+//                // OBS! Here we need expression handling
+//                
+//                Move stQ.aOrdering[iItem].stValueSource.iTable to iTable
+//                Move stQ.aOrdering[iItem].stValueSource.iColumn to iColumn
+//                Get _SQL_ColumnName stQ hoTQ iTable iColumn to sColumnName
+//                Move (sValue+sColumnName) to sValue
+//                If (stQ.aOrdering[iItem].stValueSource.iType=tqSTRING) Begin
+//                    Move (sValue+" collate "+psCollation(Self)) to sValue
+//                End
+//                If (stQ.aOrdering[iItem].bDescending) Begin
+//                    Move (sValue*"DESC") to sValue
+//                End
+//                // ToDo: uppercase ordering
+////                If (stQ.aOrdering[iItem].bUppercase=1) Begin
+////                    // Somethings wrong here. And it's not the 'lower' instead of 'upper'
+////                    Move (sValue*"lower("+sValue+")") to sValue
+////                End
+//            Loop
+//            Function_Return sValue
+//        End_Function
+//
+//    Function _SQLSelectStatement tTableQuery stQ Integer hoTQ Returns String
+//        String sStatement
+//
+//        Move "select" to sStatement
+//
+//        If (stQ.iLimit>0) Begin
+//            Move (sStatement*"top "+String(stQ.iLimit)) to sStatement
+//        End
+//        If (stQ.iLimit<0) Begin
+//            Move (sStatement*"bottom "+String(0-stQ.iLimit)) to sStatement
+//        End
+//
+//        Move (sStatement*_SQL_SelectColumns(Self,stQ,hoTQ)) to sStatement
+//
+//        Move (sStatement*" from") to sStatement
+//
+//        Move (sStatement*_SQL_OuterLeftJoins(Self,stQ,hoTQ)) to sStatement // related records
+//
+//        Move (sStatement*_SQL_InnerJoins(Self,stQ,hoTQ)) to sStatement // find child records for each parent
+//
+//        If (SizeOfArray(stQ.aFilters)<>0) Begin
+//            Move (sStatement*" where") to sStatement
+//            Move (sStatement*_SQL_WhereClause(Self,stQ,hoTQ)) to sStatement
+//        End
+//        If (SizeOfArray(stQ.aOrdering)<>0) Begin
+//            Move (sStatement*" order by") to sStatement
+//            Move (sStatement*_SQL_OrderByClause(Self,stQ,hoTQ)) to sStatement
+//        End
+//        Function_Return sStatement
+//    End_Function
+//
+//    Function _SQLDeleteStatement tTableQuery stQ Integer hoTQ Returns String
+//        String sStatement
+//
+//        Move "delete" to sStatement
+//
+////        If (stQ.iLimit<>0) Begin
+////            Send OnError 742 "Limit not allowed on delete statement"
+////            Function_Return "" // Error
+////        End
+////
+////        If (SizeOfArray(stQ.aColumnSources)>0) Begin
+////            Send OnError 743 "Result column not allowed on delete statement"
+////            Function_Return "" // Error
+////        End
+//
+//        Move (sStatement*" from") to sStatement
+//
+//        Move (sStatement*_SQL_OuterLeftJoins(Self,stQ,hoTQ)) to sStatement // related records
+//
+//        Move (sStatement*_SQL_InnerJoins(Self,stQ,hoTQ)) to sStatement // find child records for each parent
+//
+//        If (SizeOfArray(stQ.aFilters)<>0) Begin
+//            Move (sStatement*" where") to sStatement
+//            Move (sStatement*_SQL_WhereClause(Self,stQ,hoTQ)) to sStatement
+//        End
+//
+////        If (SizeOfArray(stQ.aOrdering)>0) Begin
+////            Send OnError 744 "Ordering not allowed on delete statement"
+////            Function_Return "" // Error
+////        End
+//
+//        Function_Return sStatement
+//    End_Function
+//End_Class
 
 //> Class cTableQueryFunctions is the superclass of global object oTQ
 Class cTableQueryFunctions is a cObject
@@ -1050,15 +1234,18 @@ Class cTableQueryFunctions is a cObject
 
         Property Number _pnPrefetchAvoidanceFactor // Temporary property used by index rating sort algorithm
 
-        Object oSQLGeneratorMSSQLDRV is a cTableQuerySQL
+        Object _oSqlBuilder is a cTableQuerySqlBuilder
+            Send DefineOperators 
         End_Object
+        
         
         Object _oExprParser is a cTQExpressionParser
         End_Object
         
         Property Integer phoExprParser (_oExprParser(Self))
-
-        Property Handle phoSQLGeneratorMSSQLDRC (oSQLGeneratorMSSQLDRV(Self))
+        Property Handle phoSqlBuilder (_oSqlBuilder(Self))
+        Property tTQOrderBySegment[] _paOrderingTmp
+                
     End_Procedure
 
     Function Version Returns String
@@ -1090,14 +1277,19 @@ Class cTableQueryFunctions is a cObject
         // Procedure RestoreRecordBuffersOnQueryCompletion added. Use to have TQ restore all affected record buffers on find loop completion.
 // Function_Return "0.991" // 25-09-2013
         // 2015-12-09 Fixed a problem with iFailedConstrainIndex in function _FindFirstRecordAux
-        Function_Return "0.998" // 16-02-2016
+        //Function_Return "0.998" // 16-02-2016
         // 2017-01-11 Fixed _SharpenJumpInValue problem (DateTime error)
         // 2017-10-12 Jakob Kruse fixed an error in AddFilterRelateFixedRecord
         // 2017-10-13 Existing expressions have been taken out
         // 2017-12-19 Added SetBreakLevelTest
         // 2018-01-31 Fixed bind recordbuffer issue when ESQL
         // 2018-10-24 Added AddFilterNotInList and renamed AddFilterInList to AddFilterInList
-        Function_Return "0.999" // 24-10-2018
+        // Function_Return "0.999" // 24-10-2018
+        // 11-10-2023 Fixed custom sorting for UTF-8 versions of DataFlex
+        // 11-10-2023 SQL builder reworked
+        // 11-10-2023 Method DeleteRecords removed
+        // 01-11-2023 Fixed case insensitive index handling
+        Function_Return "0.9991" // 11-10-2023
     End_Function
 
     //> This is how to initiate a new tTableQuery variable. Every query starts is life by you calling this functions.
@@ -1473,7 +1665,7 @@ Class cTableQueryFunctions is a cObject
         
         Get NewGrammar of hoExprParser to stGrammar
         Get TokenizeString of hoExprParser stGrammar sExpression (&stError) to stSegment.stValueSource.aSymbols // Parse orderby expression
-        Move sExpression to stSegment.stValueSource.sConstant 
+        Move sExpression to stSegment.stValueSource.sConstant
         
         If (stError.sErrorText="") Begin
             Get ReversePolishNotation of hoExprParser stGrammar stSegment.stValueSource.aSymbols (&stError) to stSegment.stValueSource.aSymbols
@@ -1519,12 +1711,12 @@ Class cTableQueryFunctions is a cObject
 
     //> Shorthand for sending the AddOrdering a number of times to match the factual search order of a particular index. It's hard to explain why you'd do it.
     Procedure SetOrderByToIndex tTableQuery ByRef stQ Integer iIndex
-        tOCIndex strIndex
+        tOCIndex stIndex
         Integer iSegment iSegments
-        Get IndexDefinition of oOverlapColumnFunctions stQ.iTable iIndex to strIndex
-        Move (SizeOfArray(strIndex.aSegments)-1) to iSegments
+        Get IndexDefinition of oOverlapColumnFunctions stQ.iTable iIndex to stIndex
+        Move (SizeOfArray(stIndex.aSegments)-1) to iSegments
         For iSegment from 0 to iSegments
-            Send AddOrderBy (&stQ) stQ.iTable strIndex.aSegments[iSegment].iColumn strIndex.aSegments[iSegment].bDescending strIndex.aSegments[iSegment].bUppercase
+            Send AddOrderBy (&stQ) stQ.iTable stIndex.aSegments[iSegment].iColumn stIndex.aSegments[iSegment].bDescending stIndex.aSegments[iSegment].bUppercase
         Loop
     End_Procedure
     
@@ -1616,14 +1808,14 @@ Class cTableQueryFunctions is a cObject
 
     Procedure AddFilter tTableQuery ByRef stQ Integer iTable Integer iColumn Integer iComp String sConstant
         Integer iRelateItem
-        tTQFilterSegment strSegment
+        tTQFilterSegment stSegment
 
-        Move iTable to strSegment.stLeftValue.iTable
-        Move iColumn to strSegment.stLeftValue.iColumn
-        Get _ColumnType iTable iColumn to strSegment.stLeftValue.iType
-        Move iComp to strSegment.iComp
-        Move sConstant to strSegment.stRightValue.sConstant
-        Get _ColumnType iTable iColumn to strSegment.stRightValue.iType
+        Move iTable to stSegment.stLeftValue.iTable
+        Move iColumn to stSegment.stLeftValue.iColumn
+        Get _ColumnType iTable iColumn to stSegment.stLeftValue.iType
+        Move iComp to stSegment.iComp
+        Move sConstant to stSegment.stRightValue.sConstant
+        Get _ColumnType iTable iColumn to stSegment.stRightValue.iType
 
         If (iTable<>stQ.iTable) Begin
             // Check if this parent table is accessible via the known table relations:
@@ -1632,7 +1824,7 @@ Class cTableQueryFunctions is a cObject
                 Send OnError 703 ("Unknown table relation to table "+String(iTable))
             End
         End
-        Move strSegment to stQ.aFilters[SizeOfArray(stQ.aFilters)]
+        Move stSegment to stQ.aFilters[SizeOfArray(stQ.aFilters)]
     End_Procedure
     
     Procedure AddFilterExpression tTableQuery ByRef stQ String sExpression 
@@ -1651,7 +1843,7 @@ Class cTableQueryFunctions is a cObject
         
         Get NewGrammar of hoExprParser to stGrammar
         Get TokenizeString of hoExprParser stGrammar sExpression (&stError) to stFilter.stRightValue.aSymbols // Parse filter expression
-        Move sExpression to stFilter.stRightValue.sConstant 
+        Move sExpression to stFilter.stRightValue.sConstant
 
         If (stError.sErrorText="") Begin
             Get ReversePolishNotation of hoExprParser stGrammar stFilter.stRightValue.aSymbols (&stError) to stFilter.stRightValue.aSymbols
@@ -1673,15 +1865,15 @@ Class cTableQueryFunctions is a cObject
 
     Procedure AddFilterInList tTableQuery ByRef stQ Integer iTable Integer iColumn String[] aList
         Integer iFilterIndex iRelateItem
-        tTQFilterSegment strSegment
+        tTQFilterSegment stSegment
 
-        Move iTable to strSegment.stLeftValue.iTable
-        Move iColumn to strSegment.stLeftValue.iColumn
-        Get _ColumnType iTable iColumn to strSegment.stLeftValue.iType
-        Move tqEQ to strSegment.iComp
-        Move aList to strSegment.stRightValue.aOrList
-        Move 0 to strSegment.stRightValue._iOrListPointer
-        Get _ColumnType iTable iColumn to strSegment.stRightValue.iType
+        Move iTable to stSegment.stLeftValue.iTable
+        Move iColumn to stSegment.stLeftValue.iColumn
+        Get _ColumnType iTable iColumn to stSegment.stLeftValue.iType
+        Move tqEQ to stSegment.iComp
+        Move aList to stSegment.stRightValue.aOrList
+        Move 0 to stSegment.stRightValue._iOrListPointer
+        Get _ColumnType iTable iColumn to stSegment.stRightValue.iType
 
         If (iTable<>stQ.iTable) Begin
             // Check if this parent table is accessible via the known table relations:
@@ -1692,7 +1884,7 @@ Class cTableQueryFunctions is a cObject
         End
         
         Move (SizeOfArray(stQ.aFilters)) to iFilterIndex
-        Move strSegment to stQ.aFilters[iFilterIndex]
+        Move stSegment to stQ.aFilters[iFilterIndex]
     End_Procedure
 
     Procedure AddFilterNotInList tTableQuery ByRef stQ Integer iTable Integer iColumn String[] aList
@@ -1704,27 +1896,31 @@ Class cTableQueryFunctions is a cObject
     
     Procedure AddFilterTableColumn tTableQuery ByRef stQ Integer iTable Integer iColumn Integer iComp Integer iFilterTable Integer iFilterColumn
         Integer iFilterIndex iRelateItem
-        tTQFilterSegment strSegment
+        tTQFilterSegment stSegment
 
-        Move iTable to strSegment.stLeftValue.iTable
-        Move iColumn to strSegment.stLeftValue.iColumn
-        Get _ColumnType iTable iColumn to strSegment.stLeftValue.iType
-        Move iComp to strSegment.iComp
-        Move iFilterTable to strSegment.stRightValue.iTable
-        Move iFilterColumn to strSegment.stRightValue.iColumn
-        Get _ColumnType iFilterTable iFilterColumn to strSegment.stRightValue.iType
+        Move iTable to stSegment.stLeftValue.iTable
+        Move iColumn to stSegment.stLeftValue.iColumn
+        Get _ColumnType iTable iColumn to stSegment.stLeftValue.iType
+        Move iComp to stSegment.iComp
+        Move iFilterTable to stSegment.stRightValue.iTable
+        Move iFilterColumn to stSegment.stRightValue.iColumn
+        Get _ColumnType iFilterTable iFilterColumn to stSegment.stRightValue.iType
 
-        If (strSegment.stLeftValue.iTable<>stQ.iTable) Begin
+        If (stSegment.stLeftValue.iTable<>stQ.iTable) Begin
             // Check if left hand table is accessible via the known table relations:
-            Get _FindTableRelation stQ strSegment.stLeftValue.iTable to iRelateItem
+            Get _FindTableRelation stQ stSegment.stLeftValue.iTable to iRelateItem
             If (iRelateItem=-1) Begin
-                Send OnError 705 ("Unknown table relation to table "+String(strSegment.stLeftValue.iTable))
+                Send OnError 705 ("Unknown table relation to table "+String(stSegment.stLeftValue.iTable))
             End
         End
 
         Move (SizeOfArray(stQ.aFilters)) to iFilterIndex
-        Move strSegment to stQ.aFilters[iFilterIndex]
+        Move stSegment to stQ.aFilters[iFilterIndex]
     End_Procedure
+    
+//    Procedure SetLastFilterCaseInsensitive tTableQuery ByRef stQ 
+//        Move True to stQ.aFilters[SizeOfArray(stQ.aFilters)-1].bUppercaseFilter
+//    End_Procedure
     
         Procedure _AddConstrainRelateSegments tTableQuery ByRef stQ Integer iTable Integer[] aColumns Integer iRelTable Integer[] aRelColumns
             Integer iColumns iItem
@@ -1864,21 +2060,21 @@ Class cTableQueryFunctions is a cObject
             Integer iTable iComp
 
             Number[] aColumnRatings
-            tOCTable strTable
+            tOCTable stTable
 
             Move stQ.iTable to iTable
 
-            Get TableDefinition of oOverlapColumnFunctions iTable to strTable
+            Get TableDefinition of oOverlapColumnFunctions iTable to stTable
 
-            Move (SizeOfArray(strTable.aIndices)-1) to iIndices
+            Move (SizeOfArray(stTable.aIndices)-1) to iIndices
             Move (SizeOfArray(stQ.aFilters)-1) to iConstraints
-            Move (ResizeArray(aColumnRatings,SizeOfArray(strTable.aColumns))) to aColumnRatings
+            Move (ResizeArray(aColumnRatings,SizeOfArray(stTable.aColumns))) to aColumnRatings
 
             For iIndex from 1 to iIndices
-                Move (SizeOfArray(strTable.aIndices[iIndex].aSegments)-1) to iSegments
+                Move (SizeOfArray(stTable.aIndices[iIndex].aSegments)-1) to iSegments
 
                 For iSegment from 0 to iSegments
-                    Move strTable.aIndices[iIndex].aSegments[iSegment].iColumn to iColumn
+                    Move stTable.aIndices[iIndex].aSegments[iSegment].iColumn to iColumn
 
                     If (aColumnRatings[iColumn]=0) Begin // To avoid the same column getting added ratings because appearing in multiple indices
 
@@ -2009,7 +2205,7 @@ Class cTableQueryFunctions is a cObject
             // or
             //     2)   it is satisfied by the "next segment" in the index we're testing
             //
-            tOCIndex              strIndex
+            tOCIndex              stIndex
             tOCIndexSegment[]     aIndexSegments
             tTQOrderBySegment[]   aOrderingSegments
             _tTQValueSource       stValueSource
@@ -2037,9 +2233,9 @@ Class cTableQueryFunctions is a cObject
                 End
             End
             
-            Get IndexDefinition of oOverlapColumnFunctions stQ.iTable iIndex to strIndex
+            Get IndexDefinition of oOverlapColumnFunctions stQ.iTable iIndex to stIndex
             
-            Get _TrimIndexSegments stQ strIndex.aSegments to aIndexSegments
+            Get _TrimIndexSegments stQ stIndex.aSegments to aIndexSegments
             Get _TrimOrderBySegments stQ stQ.aOrdering to aOrderingSegments
 
             Move (SizeOfArray(aIndexSegments)-1) to iIndexSegments
@@ -2081,7 +2277,7 @@ Class cTableQueryFunctions is a cObject
             Integer iTable iColumn
             Integer iSegmentIndex iSegmentMax iPushIndex
             Number nExpectedNumberRows 
-            tOCIndex strIndex
+            tOCIndex stIndex
             Number nColumnRating
             
             If (iIndex>=1000) Begin
@@ -2090,14 +2286,14 @@ Class cTableQueryFunctions is a cObject
 
             Move stQ.iTable to iTable
             Get_Attribute DF_FILE_RECORDS_USED of iTable to nExpectedNumberRows
-            Get IndexDefinition of oOverlapColumnFunctions iTable iIndex to strIndex
-            Move (SizeOfArray(strIndex.aSegments)) to iSegmentMax
+            Get IndexDefinition of oOverlapColumnFunctions iTable iIndex to stIndex
+            Move (SizeOfArray(stIndex.aSegments)) to iSegmentMax
 
             Move True to bAccept
             Move 0 to iSegmentIndex
             
             While (bAccept and iSegmentIndex<iSegmentMax) // From l-to-r: get all consecutive EQ segments
-                Move strIndex.aSegments[iSegmentIndex].iColumn to iColumn
+                Move stIndex.aSegments[iSegmentIndex].iColumn to iColumn
                 Move aColumnRatings[iColumn] to nColumnRating
                 Move (nColumnRating=2) to bAccept
                 If (bAccept) Begin
@@ -2114,7 +2310,7 @@ Class cTableQueryFunctions is a cObject
             Move True to bAccept
             
             While (bAccept and iSegmentIndex<iSegmentMax) // Continuing l-to-r: get all consecutive GE/GT segments
-                Move strIndex.aSegments[iSegmentIndex].iColumn to iColumn
+                Move stIndex.aSegments[iSegmentIndex].iColumn to iColumn
                 Move aColumnRatings[iColumn] to nColumnRating
                 Move (nColumnRating>=1 or nColumnRating=0.49) to bAccept
                 If (bAccept) Begin
@@ -2127,7 +2323,7 @@ Class cTableQueryFunctions is a cObject
             Move True to bAccept
 
             While (bAccept and iSegmentIndex<iSegmentMax) // Continuing l-to-r: get all consecutive LE/LT segments
-                Move strIndex.aSegments[iSegmentIndex].iColumn to iColumn
+                Move stIndex.aSegments[iSegmentIndex].iColumn to iColumn
                 Move aColumnRatings[iColumn] to nColumnRating
                 Move (nColumnRating>=1 or nColumnRating=0.51) to bAccept
                 If (bAccept) Begin
@@ -2212,7 +2408,7 @@ Class cTableQueryFunctions is a cObject
         Function _CompareIndexRating _tTQIndexRating strRatingLeft _tTQIndexRating strRatingRight Returns Integer
             Number nFactorLeft nFactorRight
             Number nPrefetchAvoidanceFactor
-        
+
             Get _pnPrefetchAvoidanceFactor to nPrefetchAvoidanceFactor
         
             // This means that we accept an index in agreement with the output order if it is more
@@ -2352,9 +2548,12 @@ Class cTableQueryFunctions is a cObject
                     Function_Return -1
                 End_Function
 
-                Procedure _AppendConstraint tTQFilterSegment[] ByRef aConstraint tTQFilterSegment stConstraint
+                Procedure _AppendConstraint tTQFilterSegment[] ByRef aConstraint tTQFilterSegment stConstraint Boolean bMakeItUppercased
                     Integer iIndex
                     Move (SizeOfArray(aConstraint)) to iIndex
+                    If (bMakeItUppercased) Begin
+                        Move True to stConstraint.bUppercaseFilter
+                    End
                     Move stConstraint to aConstraint[iIndex]
                 End_Procedure
 
@@ -2362,7 +2561,7 @@ Class cTableQueryFunctions is a cObject
                     Move (RemoveFromArray(aFilters,iConstraint)) to aFilters
                 End_Procedure
         
-        Procedure _CalculateJumpInOutConditionsStep01 tTableQuery ByRef stQ Integer ByRef iSegment Integer iSegments tOCIndex strIndex
+        Procedure _CalculateJumpInOutConditionsStep01 tTableQuery ByRef stQ Integer ByRef iSegment Integer iSegments tOCIndex stIndex
             // 1: As long as we can consequetively provide EQ constraints on the segment, we copy the constraint to 
             //    both the JumpInValues and JumpOutValues (and disregard that constraint from then on)
             Integer iTable iIndex iColumn iConstraint
@@ -2374,13 +2573,21 @@ Class cTableQueryFunctions is a cObject
             Move True to bCont
 
             While (bCont and iSegment<=iSegments)
-                Move strIndex.aSegments[iSegment].iColumn to iColumn
+                Move stIndex.aSegments[iSegment].iColumn to iColumn
                 Get _FindConstraintEQ stQ.aFilters iTable iColumn False to iConstraint
                 Move (iConstraint<>-1) to bCont
                 If (bCont) Begin
-                    Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] 
-                    Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint]
-                    Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                    If (not(stIndex.aSegments[iSegment].bUppercase)) Begin 
+                        Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] False
+                        Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] False
+                        // UC-INDEX: copy filter on case-insentitive segment to stQ._stCompiled.aOtherConditions
+                        Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                    End
+                    Else Begin
+                        Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] True
+                        Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] True
+                    End
+                    
                     Increment iSegment
                 End
             Loop
@@ -2414,9 +2621,9 @@ Class cTableQueryFunctions is a cObject
                     Function_Return -1
                 End_Function
                 
-        Procedure _CalculateJumpInOutConditionsStep02 tTableQuery ByRef stQ Integer ByRef iJumpInSegment Integer ByRef iJumpOutSegment Integer iSegments tOCIndex strIndex
+        Procedure _CalculateJumpInOutConditionsStep02 tTableQuery ByRef stQ Integer ByRef iJumpInSegment Integer ByRef iJumpOutSegment Integer iSegments tOCIndex stIndex
             // 2. If we can then provide a LT,LE,GE,GT type constraint (for JumpInValues and JumpOutValues 
-            //    indepentdantly) we move the constraint to JumpInValues/JumpOutValues (and disregard that 
+            //    indepentdantly) we move the constraint to JumpInValues/JumpOutValues (and disregard that
             //    constraint from then on *unless* it's a jump-in constraint and the comperator is GT (or LT
             //    if it's a descending index segment))
             Integer iTable iIndex iColumn iConstraint
@@ -2427,13 +2634,20 @@ Class cTableQueryFunctions is a cObject
 
             // Jump in
             If (iJumpInSegment<=iSegments) Begin
-                Move strIndex.aSegments[iJumpInSegment].iColumn to iColumn
-                If (strIndex.aSegments[iJumpInSegment].bDescending) Begin
+                Move stIndex.aSegments[iJumpInSegment].iColumn to iColumn
+                If (stIndex.aSegments[iJumpInSegment].bDescending) Begin
                     Get _FindConstraintLELT stQ.aFilters iTable iColumn False to iConstraint
                     If (iConstraint<>-1) Begin
-                        Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint]
-                        If (stQ.aFilters[iConstraint].iComp=tqLE) Begin
-                            Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                        // UC-INDEX: if uppercased segment we must re-evaluate for each record, 
+                        // and therefore we will keep the filter
+                        If (not(stIndex.aSegments[iJumpInSegment].bUppercase)) Begin 
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] False
+                            If (stQ.aFilters[iConstraint].iComp=tqLE) Begin
+                                Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                            End
+                        End
+                        Else Begin
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] True
                         End
                         Increment iJumpInSegment
                     End
@@ -2444,9 +2658,16 @@ Class cTableQueryFunctions is a cObject
                 Else Begin
                     Get _FindConstraintGEGT stQ.aFilters iTable iColumn False to iConstraint
                     If (iConstraint<>-1) Begin
-                        Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] 
-                        If (stQ.aFilters[iConstraint].iComp=tqGE) Begin
-                            Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                        // UC-INDEX: if uppercased segment we must re-evaluate for each record, 
+                        // and therefore we will keep the filter
+                        If (not(stIndex.aSegments[iJumpInSegment].bUppercase)) Begin 
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] False
+                            If (stQ.aFilters[iConstraint].iComp=tqGE) Begin
+                                Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                            End
+                        End
+                        Else Begin
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpInValues) stQ.aFilters[iConstraint] True
                         End
                         Increment iJumpInSegment
                     End
@@ -2458,12 +2679,22 @@ Class cTableQueryFunctions is a cObject
             
             // Jump out
             If (iJumpOutSegment<=iSegments) Begin
-                Move strIndex.aSegments[iJumpOutSegment].iColumn to iColumn
-                If (strIndex.aSegments[iJumpOutSegment].bDescending) Begin
+                Move stIndex.aSegments[iJumpOutSegment].iColumn to iColumn
+                If (stIndex.aSegments[iJumpOutSegment].bDescending) Begin
                     Get _FindConstraintGEGT stQ.aFilters iTable iColumn False to iConstraint
                     If (iConstraint<>-1) Begin
-                        Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] 
-                        Send _DeleteConstraint (&stQ.aFilters) iConstraint
+
+                        // UC-INDEX: if uppercased segment we must re-evaluate for each record, 
+                        // and therefore we will keep the filter
+                        If (not(stIndex.aSegments[iJumpOutSegment].bUppercase)) Begin 
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] False
+                            Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                        End
+                        Else Begin
+                            // We jump out only when the uppercased column-value is greater than the uppercased filter-value
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] True
+                        End
+
                         Increment iJumpOutSegment
                     End
                     Else Begin
@@ -2473,8 +2704,16 @@ Class cTableQueryFunctions is a cObject
                 Else Begin
                     Get _FindConstraintLELT stQ.aFilters iTable iColumn False to iConstraint
                     If (iConstraint<>-1) Begin
-                        Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] 
-                        Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                        // UC-INDEX: if uppercased segment we must re-evaluate for each record, 
+                        // and therefore we will keep the filter
+                        If (not(stIndex.aSegments[iJumpOutSegment].bUppercase)) Begin 
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] False
+                            Send _DeleteConstraint (&stQ.aFilters) iConstraint
+                        End
+                        Else Begin
+                            // We jump out only when the uppercased column-value is greater than the uppercased filter-value
+                            Send _AppendConstraint (&stQ._stCompiled.aJumpOutValues) stQ.aFilters[iConstraint] True
+                        End
                         Increment iJumpOutSegment
                     End
                     Else Begin
@@ -2489,7 +2728,7 @@ Class cTableQueryFunctions is a cObject
             Integer iJumpInSegment iJumpOutSegment
             Boolean bBackwards 
             tTQFilterSegment[] aBackupConstraints
-            tOCIndex strIndex
+            tOCIndex stIndex
             
             Move stQ.iTable to iTable
             Move stQ._stCompiled.iIndex to iIndex
@@ -2531,23 +2770,23 @@ Class cTableQueryFunctions is a cObject
             Move (ResizeArray(stQ._stCompiled.aJumpOutValues,0)) to stQ._stCompiled.aJumpOutValues
             Move (ResizeArray(stQ._stCompiled.aOtherConditions,0)) to stQ._stCompiled.aOtherConditions
             
-            Get IndexDefinition of oOverlapColumnFunctions stQ.iTable iIndex to strIndex
-            Move (SizeOfArray(strIndex.aSegments)-1) to iSegments
+            Get IndexDefinition of oOverlapColumnFunctions stQ.iTable iIndex to stIndex
+            Move (SizeOfArray(stIndex.aSegments)-1) to iSegments
         
             Move 0 to iSegment 
              
             // Calculating the JumpInValues:
-            //     Starting with the most significant segment we go through the segments of the iScanIndex
+            //     Starting with the most significant segment we go through the segments of the _stCompiled.iIndex
             //        1. As long as we can consequetively provide EQ constraints on the segment, we copy the 
             //           constraint to both the JumpInValues and JumpOutValues (and disregard that constraint 
             //           from then on)
-                         Send _CalculateJumpInOutConditionsStep01 (&stQ) (&iSegment) iSegments strIndex
+                         Send _CalculateJumpInOutConditionsStep01 (&stQ) (&iSegment) iSegments stIndex
             //        2. If we can then provide a LT,LE,GE,GT type constraint (for JumpInValues and JumpOutValues 
             //           respectively) we move the constraint to JumpInValues/JumpOutValues (and disregard that 
             //           constraint from then on)
                          Move iSegment to iJumpInSegment
                          Move iSegment to iJumpOutSegment
-                         Send _CalculateJumpInOutConditionsStep02 (&stQ) (&iJumpInSegment) (&iJumpOutSegment) iSegments strIndex
+                         Send _CalculateJumpInOutConditionsStep02 (&stQ) (&iJumpInSegment) (&iJumpOutSegment) iSegments stIndex
             //        3. The constraints that are then left are copied to the aOtherConstraints array
                          Move stQ.aFilters to stQ._stCompiled.aOtherConditions
             Move aBackupConstraints to stQ.aFilters 
@@ -2716,25 +2955,25 @@ Class cTableQueryFunctions is a cObject
                 End_Function
 
             Function SQLSelectStatement tTableQuery stQ Returns String
-                Handle hoSQLGenerator
+                Handle hoSqlBuilder
                 String sStatement
                 Send _TableRelateStatesReset (&stQ)
                 If (stQ.sForceSQLStatement<>"") Begin
                     Function_Return stQ.sForceSQLStatement
                 End
-                Get phoSQLGeneratorMSSQLDRC to hoSQLGenerator
-                Get _SQLSelectStatement of hoSQLGenerator stQ Self to sStatement
+                Get phoSqlBuilder to hoSqlBuilder
+                Get TableQuerySelectStatement of hoSqlBuilder stQ to sStatement
                 Function_Return sStatement
             End_Function
             
-            Function SQLDeleteStatement tTableQuery stQ Returns String
-                Handle hoSQLGenerator
-                String sStatement
-                Send _TableRelateStatesReset (&stQ)
-                Get phoSQLGeneratorMSSQLDRC to hoSQLGenerator
-                Get _SQLDeleteStatement of hoSQLGenerator stQ Self to sStatement
-                Function_Return sStatement
-            End_Function
+//            Function SQLDeleteStatement tTableQuery stQ Returns String
+//                Handle hoSQLGenerator
+//                String sStatement
+//                Send _TableRelateStatesReset (&stQ)
+//                Get phoSqlBuilder to hoSQLGenerator
+//                Get _SQLDeleteStatement of hoSQLGenerator stQ Self to sStatement
+//                Function_Return sStatement
+//            End_Function
 
                 // Used by TableQueryStructureFunctions.pkg
                 Procedure _ReadParentSortValues tTableQuery ByRef strParentQuery tTableQuery ByRef strChildQuery
@@ -2790,9 +3029,9 @@ Class cTableQueryFunctions is a cObject
 //                                Move (ToANSI(sStatement)) to sStatement
                                 Send SQLExecDirect of strStatement.hStatHandle sStatement
                                 
-                                If (IsDebuggerPresent()) Begin
-                                    Showln ("SQLExecDirect: "+sStatement)
-                                End
+//                                If (IsDebuggerPresent()) Begin
+//                                    Showln ("SQLExecDirect: "+sStatement)
+//                                End
                                 
                                 Move (SizeOfArray(stQ.aOutputColumns)-1) to iMax
                                 For iItem from 0 to iMax
@@ -2811,8 +3050,8 @@ Class cTableQueryFunctions is a cObject
                         End
                     End
                     Else Begin
-                        If (sDriver<>"DATAFLEX") Begin // We're on an SQL backend 
-                            // This means that we have been 'forced' to use the record oriented 
+                        If ((sDriver<>"DATAFLEX") and (sDriver <> "DFBTRDRV")) Begin // We're on an SQL backend
+                            // This means that we have been 'forced' to use the record oriented
                             // interface but we are in fact an SQL table and therefore we might
                             // might want to tamper with the prefetch cache settings:
                             If (stQ._stControlBlock.stSQLCacheControl.bUseSettings) Begin
@@ -2851,8 +3090,8 @@ Class cTableQueryFunctions is a cObject
                 Else Begin
                     Move stQ.iTable to iTable
                     Get_Attribute DF_FILE_DRIVER of iTable to sDriver
-                    If (sDriver<>"DATAFLEX") Begin // We're on an SQL backend 
-                        // This means that we have been 'forced' to use the record oriented 
+                    If ((sDriver<>"DATAFLEX") and (sDriver <> "DFBTRDRV")) Begin // We're on an SQL backend
+                        // This means that we have been 'forced' to use the record oriented
                         // interface but we are in fact an SQL table and therefore we want
                         // to restore the prefetch cache settings (if they were originally set):
                         If (stQ._stControlBlock.stSQLCacheControl.bUseSettings) Begin
@@ -3143,16 +3382,28 @@ Class cTableQueryFunctions is a cObject
                         // OBS! Here we need a check that we do not in- or decrement the value out of range
                         If (bDescending) Begin
                             If (iDecs=0) Begin
-                                    Move (nValue-1) to nValue
+                                Move (nValue-1) to nValue
+                            End
+                            Else If (iDecs=1) Begin
+                                Move (nValue-0.1) to nValue
                             End
                             Else If (iDecs=2) Begin
                                 Move (nValue-0.01) to nValue
                             End
+                            Else If (iDecs=3) Begin
+                                Move (nValue-0.001) to nValue
+                            End
                             Else If (iDecs=4) Begin
                                 Move (nValue-0.0001) to nValue
                             End
+                            Else If (iDecs=5) Begin
+                                Move (nValue-0.00001) to nValue
+                            End
                             Else If (iDecs=6) Begin
                                 Move (nValue-0.000001) to nValue
+                            End
+                            Else If (iDecs=7) Begin
+                                Move (nValue-0.0000001) to nValue
                             End
                             Else If (iDecs=8) Begin
                                 Move (nValue-0.00000001) to nValue
@@ -3162,14 +3413,26 @@ Class cTableQueryFunctions is a cObject
                             If (iDecs=0) Begin
                                 Move (nValue+1) to nValue
                             End
+                            Else If (iDecs=1) Begin
+                                Move (nValue+0.1) to nValue
+                            End
                             Else If (iDecs=2) Begin
                                 Move (nValue+0.01) to nValue
+                            End
+                            Else If (iDecs=3) Begin
+                                Move (nValue+0.001) to nValue
                             End
                             Else If (iDecs=4) Begin
                                 Move (nValue+0.0001) to nValue
                             End
+                            Else If (iDecs=5) Begin
+                                Move (nValue+0.00001) to nValue
+                            End
                             Else If (iDecs=6) Begin
                                 Move (nValue+0.000001) to nValue
+                            End
+                            Else If (iDecs=7) Begin
+                                Move (nValue+0.0000001) to nValue
                             End
                             Else If (iDecs=8) Begin
                                 Move (nValue+0.00000001) to nValue
@@ -3209,12 +3472,18 @@ Class cTableQueryFunctions is a cObject
                     Function_Return sValue
                 End_Function
 
+        // UC-INDEX:
+        // 01-11-2023: uppercased index segment presents a problem because the "normal" jump in/out mechanism
+        // can not predict the sequence of records found with respect to uppercased segments.
+        //
+        
+        
         Procedure _SeedRecordBuffer tTableQuery stQ
             Boolean bIndexSeedSharpeningEnabled bBackwards
             Integer iMax iMax2 iIndex iTable iColumn
             String sValue
             tTQFilterSegment[] aFilters
-            tocIndex strIndex
+            tocIndex stIndex
 
             Move stQ._stCompiled.bIndexSeedSharpeningEnabled to bIndexSeedSharpeningEnabled
 
@@ -3225,6 +3494,10 @@ Class cTableQueryFunctions is a cObject
                 Move aFilters[iIndex].stLeftValue.iTable to iTable
                 Move aFilters[iIndex].stLeftValue.iColumn to iColumn
                 Move aFilters[iIndex].stRightValue._sValue to sValue
+                
+                // UC-INDEX:
+                // At this point we need to find out if the finding index has bUppercased true
+                // on a segment representing the column filtered by the current filter.
 
                 If (bIndexSeedSharpeningEnabled) Begin
                     If (aFilters[iIndex].iComp=tqLT) Begin // Attempt to sharpen jump-in value on descending segment
@@ -3238,12 +3511,12 @@ Class cTableQueryFunctions is a cObject
                 Set_Field_Value iTable iColumn to sValue
             Loop
 
-            Get IndexDefinition of oOverlapColumnFunctions stQ.iTable stQ._stCompiled.iIndex to strIndex
-            Move (SizeOfArray(strIndex.aSegments)-1) to iMax2
+            Get IndexDefinition of oOverlapColumnFunctions stQ.iTable stQ._stCompiled.iIndex to stIndex
+            Move (SizeOfArray(stIndex.aSegments)-1) to iMax2
             For iIndex from (iMax+1) to iMax2
-                Move ((Integer(stQ._stCompiled.bBackwards)+Integer(strIndex.aSegments[iIndex].bDescending))=1) to bBackwards // xor
-                If (strIndex.aSegments[iIndex].iColumn>0 or bBackwards) Begin // Don't seed a negative recnum !!!!
-                    Send SeedMinValue of oIndexFunctions stQ.iTable strIndex.aSegments[iIndex].iColumn (bBackwards)
+                Move ((Integer(stQ._stCompiled.bBackwards)+Integer(stIndex.aSegments[iIndex].bDescending))=1) to bBackwards // xor
+                If (stIndex.aSegments[iIndex].iColumn>0 or bBackwards) Begin // Don't seed a negative recnum !!!!
+                    Send SeedMinValue of oIndexFunctions stQ.iTable stIndex.aSegments[iIndex].iColumn (bBackwards)
                 End
             Loop
         End_Procedure
@@ -3370,13 +3643,23 @@ Class cTableQueryFunctions is a cObject
                     For iOrListIndex from 0 to iOrListMax
                         If (not(bFoundInList)) Begin
                             If (iType=tqSTRING) Begin
-                                Get _TestString   sLeftValue stFilter.iComp stFilter.stMatchEvalSequence stFilter.stRightValue.aOrList[iOrListIndex] to bFoundInList
+                                If (stFilter.bUppercaseFilter) Begin
+                                    Get _TestString   (Uppercase(sLeftValue)) stFilter.iComp stFilter.stMatchEvalSequence (Uppercase(stFilter.stRightValue.aOrList[iOrListIndex])) to bFoundInList
+                                End
+                                Else Begin
+                                    Get _TestString   sLeftValue stFilter.iComp stFilter.stMatchEvalSequence stFilter.stRightValue.aOrList[iOrListIndex] to bFoundInList
+                                End
                             End
                             Else If (iType=tqNUMBER) Begin
                                 Get _TestNumber   sLeftValue stFilter.iComp stFilter.stRightValue.aOrList[iOrListIndex] to bFoundInList
                             End
                             Else If (iType=tqTEXT) Begin
-                                Get _TestText     sLeftValue stFilter.iComp stFilter.stMatchEvalSequence stFilter.stRightValue.aOrList[iOrListIndex] to bFoundInList
+                                If (stFilter.bUppercaseFilter) Begin
+                                    Get _TestText (Uppercase(sLeftValue)) stFilter.iComp stFilter.stMatchEvalSequence (Uppercase(stFilter.stRightValue.aOrList[iOrListIndex])) to bFoundInList
+                                End
+                                Else Begin
+                                    Get _TestText     sLeftValue stFilter.iComp stFilter.stMatchEvalSequence stFilter.stRightValue.aOrList[iOrListIndex] to bFoundInList
+                                End
                             End
                             Else If (iType=tqDATE) Begin
                                 Get _TestDate     sLeftValue stFilter.iComp stFilter.stRightValue.aOrList[iOrListIndex] to bFoundInList
@@ -3407,13 +3690,23 @@ Class cTableQueryFunctions is a cObject
                         Move stFilter.stRightValue._sValue to sRightValue
                     End
                     If (iType=tqSTRING) Begin
-                        Get _TestString   sLeftValue stFilter.iComp stFilter.stMatchEvalSequence sRightValue to bEval
+                        If (stFilter.bUppercaseFilter) Begin
+                            Get _TestString (Uppercase(sLeftValue)) stFilter.iComp stFilter.stMatchEvalSequence (Uppercase(sRightValue)) to bEval
+                        End
+                        Else Begin
+                            Get _TestString   sLeftValue stFilter.iComp stFilter.stMatchEvalSequence sRightValue to bEval
+                        End
                     End
                     Else If (iType=tqNUMBER) Begin
                         Get _TestNumber   sLeftValue stFilter.iComp sRightValue to bEval
                     End
                     Else If (iType=tqTEXT) Begin
-                        Get _TestText     sLeftValue stFilter.iComp stFilter.stMatchEvalSequence sRightValue to bEval
+                        If (stFilter.bUppercaseFilter) Begin
+                            Get _TestText (Uppercase(sLeftValue)) stFilter.iComp stFilter.stMatchEvalSequence (Uppercase(sRightValue)) to bEval                            
+                        End
+                        Else Begin
+                            Get _TestText     sLeftValue stFilter.iComp stFilter.stMatchEvalSequence sRightValue to bEval                            
+                        End
                     End
                     Else If (iType=tqDATE) Begin
                         Get _TestDate     sLeftValue stFilter.iComp sRightValue to bEval
@@ -3476,26 +3769,24 @@ Class cTableQueryFunctions is a cObject
     End_Procedure
     
     Function _OrderingSegmentSortValue tTableQuery ByRef stQ tTQOrderBySegment stOrderingSegment Returns String
-        Integer iTable iDFType iTQType
-        String sValue sSortValue
-        tocIndexSegment stIndexSegment
+        Integer iTable iColumn 
+        String sValue 
         
         Move stOrderingSegment.stValueSource.iTable to iTable
         
         If (iTable<>0) Begin // a table column value
-            Move stOrderingSegment.stValueSource.iColumn to stIndexSegment.iColumn
-            Move stOrderingSegment.bDescending to stIndexSegment.bDescending
-            Move (stOrderingSegment.bUppercase=1) to stIndexSegment.bUppercase //-1:don't care, 0:no, 1:yes
+            Move stOrderingSegment.stValueSource.iColumn to iColumn
             If (iTable<>stQ.iTable) Begin // It's a "parent" table
                 Send _RelateToTable (&stQ) iTable
             End
-            Get IndexSegmentSortValue of oIndexFunctions iTable stIndexSegment to sValue
+            Get_Field_Value iTable iColumn to sValue
+            Move (Rtrim(sValue)) to sValue
         End
         If (iTable=0 and SizeOfArray(stOrderingSegment.stValueSource.aSymbols)>0) Begin 
             // It's an expression
             Get _ValueSourceValue (&stQ) stOrderingSegment.stValueSource to sValue
-            Get ValueTypeTQtoDF stOrderingSegment.stValueSource.iType to iDFType
-            Get SortValueFormat of oIndexFunctions sValue iDFType stOrderingSegment.stValueSource.iLen stOrderingSegment.stValueSource.iDecimals to sValue
+//            Get ValueTypeTQtoDF stOrderingSegment.stValueSource.iType to iDFType
+//            Get SortValueFormat of oIndexFunctions sValue iDFType stOrderingSegment.stValueSource.iLen stOrderingSegment.stValueSource.iDecimals to sValue
         End
         Function_Return sValue
     End_Function
@@ -3550,20 +3841,21 @@ Class cTableQueryFunctions is a cObject
                 Procedure _ResultSetAddCurrentRecord tTableQuery ByRef stQ
                     Integer iRow iSegment iMax iColumn
                     Integer iTable
-                    String sValue sSortValue
+                    String sValue // sSortValue
 
                     // Row ID:
                     Move (SizeOfArray(stQ.stResultSet.aRecords)) to iRow
                     Move (GetRowID(stQ.iTable)) to stQ.stResultSet.aRecords[iRow].riRowId
 
                     // Calculate sort value:
-                    Move "" to sSortValue
+//                    Move "" to sSortValue
+                    Move (ResizeArray(stQ.stResultSet.aRecords[iRow].aSortColumnValues,0)) to stQ.stResultSet.aRecords[iRow].aSortColumnValues
                     Move (SizeOfArray(stQ.aOrdering)-1) to iMax
                     For iSegment from 0 to iMax
                         Get _OrderingSegmentSortValue (&stQ) stQ.aOrdering[iSegment] to sValue
-                        Move (sSortValue+sValue) to sSortValue
+                        Move sValue to stQ.stResultSet.aRecords[iRow].aSortColumnValues[iSegment]
                     Loop
-                    Move sSortValue to stQ.stResultSet.aRecords[iRow].sSortValue
+//                    Move sSortValue to stQ.stResultSet.aRecords[iRow].sSortValue
 
                     // Read column values:
                     Move (SizeOfArray(stQ.aColumnSources)-1) to iMax
@@ -3571,19 +3863,40 @@ Class cTableQueryFunctions is a cObject
                         Get _ValueSourceValue (&stQ) stQ.aColumnSources[iColumn] to stQ.stResultSet.aRecords[iRow].aColumnValues[iColumn]
                     Loop
                 End_Procedure
-
+                
                     Function _ResultSetRecordsCompare tTQResultRow stVal1 tTQResultRow stVal2 Returns Integer
-                        If (stVal1.sSortValue<stVal2.sSortValue) Begin
-                            Function_Return (LT)
-                        End
-                        If (stVal1.sSortValue>stVal2.sSortValue) Begin
-                            Function_Return (GT)
-                        End
+                        Integer iSegmentMax iSegment iComp
+                        tTQOrderBySegment[] aOrdering
+                        Get _paOrderingTmp to aOrdering
+                        
+                        Move (SizeOfArray(aOrdering)-1) to iSegmentMax
+                        For iSegment from 0 to iSegmentMax
+                            Get _SQLCheckAgainstParentRecord_CompareSortingSegmentValues stVal1.aSortColumnValues[iSegment] stVal2.aSortColumnValues[iSegment] aOrdering[iSegment].stValueSource.iType to iComp
+                            If (aOrdering[iSegment].bDescending) Begin
+                                If (iComp=tqLT) Begin
+                                    Move (tqGT) to iComp
+                                End
+                                Else If (iComp=tqGT) Begin
+                                    Move (tqLT) to iComp
+                                End
+                            End
+                            If (iComp<>tqEQ) Begin
+                                If (iComp=tqLT) Begin
+                                    Function_Return (LT)
+                                End
+                                Else Begin
+                                    Function_Return (GT)
+                                End
+                            End
+                        Loop
+                        
                         Function_Return (EQ)
                     End_Function
+                    
 
                 Procedure _ResultSetSort tTableQuery ByRef stQ
                     If (SizeOfArray(stQ.aOrdering)>0) Begin
+                        Set _paOrderingTmp to stQ.aOrdering
                         Move (SortArray(stQ.stResultSet.aRecords,Self,GET__ResultSetRecordsCompare)) to stQ.stResultSet.aRecords
                     End
                 End_Procedure
@@ -4151,18 +4464,18 @@ Class cTableQueryFunctions is a cObject
     Procedure _AddTableRelationSegment tTableQuery ByRef stQ Integer iSourceTable Integer iSourceColumn Integer iComp Integer iTargetTable Integer iTargetColumn
         Integer iItem
         tTQTableRelation strRelatation
-        _tTQTableRelationSegment strSegment
+        _tTQTableRelationSegment stSegment
         Get _FindTableRelation stQ iTargetTable to iItem
         If (iItem>=0) Begin
 
             // Check that iSourceTable is already available in the .aRelations member. If not: error!
             If (iSourceTable=stQ.iTable or _FindTableRelation(Self,stQ,iSourceTable)<>-1) Begin
                 Move stQ.aTableRelations[iItem] to strRelatation
-                Move iSourceTable to strSegment.iSourceTable
-                Move iComp to strSegment.iInnerJoinComp
-                Move iSourceColumn to strSegment.iSourceColumn
-                Move iTargetColumn to strSegment.iTargetColumn
-                Move strSegment to strRelatation.aSegments[SizeOfArray(strRelatation.aSegments)]
+                Move iSourceTable to stSegment.iSourceTable
+                Move iComp to stSegment.iInnerJoinComp
+                Move iSourceColumn to stSegment.iSourceColumn
+                Move iTargetColumn to stSegment.iTargetColumn
+                Move stSegment to strRelatation.aSegments[SizeOfArray(strRelatation.aSegments)]
                 Move strRelatation to stQ.aTableRelations[iItem]
             End
             Else Begin
@@ -4253,7 +4566,7 @@ Class cTableQueryFunctions is a cObject
 
             Function_Return sValue
         End_Function
-        
+
         Function __FindColumnSourceIndex tTableQuery stQ String sExpr Returns Integer
             Integer iMax iItem
             Move (SizeOfArray(stQ.aColumnSources)-1) to iMax
@@ -4348,21 +4661,6 @@ Class cTableQueryFunctions is a cObject
                     End
                     Else Begin
                         Get _SQLColumnValue stQ iColumnSourceItem to sValue
-                        // DELETE THIS
-//                        Get SQLColumnValue of stQ._stControlBlock.stSQLStatementHandle.hHandle (iColumnSourceItem+1) to sValue
-//                        Move stQ.aColumnSources[iColumnSourceItem].iType to iType
-//                        If (iType=tqDATE) Begin
-//                            Get SQLDateToDFDate of stQ._stControlBlock.stSQLStatementHandle.hHandle sValue to sValue
-//                        End
-//                        Else If (iType=tqNUMBER) Begin
-//                            Get _SQLNumericToDFNumeric stQ.iTable sValue to sValue
-//                        End
-//                        Else If (iType=tqSTRING or iType=tqTEXT) Begin
-//                            If (stQ._stControlBlock.bSQLTableIsAnsi) Begin
-//                                Move (ToOEM(sValue)) to sValue
-//                            End
-//                            Move (Rtrim(sValue)) to sValue
-//                        End
                     End
                 End
                 Else Begin
@@ -4420,39 +4718,15 @@ Class cTableQueryFunctions is a cObject
     End_Function
     
     //bSortableValues=False: column values  =True: sortable values
-    Function OrderingColumnValues tTableQuery ByRef stQ Boolean bSortableValues Returns String[]
-        Integer iMax iSegment iTable
+    Function OrderingColumnValues tTableQuery ByRef stQ Returns String[]
+        Integer iMax iSegment // iTable
         String[] aValues
-//        tocIndexSegment stIndexSegment
-// ToDo: This needs to take care of expressions        
         Move (SizeOfArray(stQ.aOrdering)-1) to iMax
         For iSegment from 0 to iMax
-            Move stQ.aOrdering[iSegment].stValueSource.iTable to iTable
-
-            If (iTable<>0 and iTable<>stQ.iTable) Begin
-                Send _RelateToTable (&stQ) iTable
+            Get _ValueSourceValue (&stQ) stQ.aOrdering[iSegment].stValueSource to aValues[iSegment]
+            If (stQ.aOrdering[iSegment].bUppercase) Begin
+                Move (Uppercase(aValues[iSegment])) to aValues[iSegment]
             End
-
-            If (bSortableValues) Begin
-                Get _OrderingSegmentSortValue (&stQ) stQ.aOrdering[iSegment] to aValues[iSegment]
-            End
-            Else Begin
-                Get _ValueSourceValue (&stQ) stQ.aOrdering[iSegment].stValueSource to aValues[iSegment]
-            End
-            
-            
-//            Move stQ.aOrdering[iSegment].stValueSource.iColumn to stSegment.iColumn
-//            Move stQ.aOrdering[iSegment].bDescending to stSegment.bDescending
-//            Move (stQ.aOrdering[iSegment].bUppercase=1) to stSegment.bUppercase // -1:don't care, 0:no, 1:yes
-//            If (iTable<>0 and iTable<>stQ.iTable) Begin
-//                Send _RelateToTable (&stQ) iTable
-//            End
-//            If (bSortableValues) Begin
-//                Get IndexSegmentSortValue of oIndexFunctions iTable stSegment to aValues[iSegment]
-//            End
-//            Else Begin
-//                Get_Field_Value iTable stSegment.iColumn to aValues[iSegment]
-//            End
         Loop
         Function_Return aValues
     End_Function
@@ -4554,7 +4828,7 @@ Class cTableQueryFunctions is a cObject
     //> situation, and without executing the query, you may
     //> call procedure RelateQueryTable to have TQ perform
     //> a relate on the main table od the query.
-    //> 
+    //>
     //> NOTE: The procedure should not be used during the 
     //> execution of the query.
     Procedure RelateQueryTable tTableQuery stQ
@@ -4741,34 +5015,34 @@ Class cTableQueryFunctions is a cObject
 
 #IFNDEF Is$WebApp // If Windows application
         Function LogTableCreate tTableQuery stQ Returns Boolean
-            tTempTableDefinition strTable
+            tTempTableDefinition stTable
 
-            Get EmptyTempTableDefinition of oTemporaryTablesFunctions to strTable
+            Get EmptyTempTableDefinition of oTemporaryTablesFunctions to stTable
 
-            Move 20000 to strTable.iMaxRecords // Max number of logs
-            Get LogTableName stQ to strTable.sFileName
-            Move "" to strTable.sFolder // blank means it goes in the data folder
-            Move "tq-logdata" to strTable.sSubFolder // means it goes in a subfolder of the data folder called "tq-logdata"
+            Move 20000 to stTable.iMaxRecords // Max number of logs
+            Get LogTableName stQ to stTable.sFileName
+            Move "" to stTable.sFolder // blank means it goes in the data folder
+            Move "tq-logdata" to stTable.sSubFolder // means it goes in a subfolder of the data folder called "tq-logdata"
 
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "DateTime"         DF_ASCII    23 0  // field no 1
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "ExecTime"         DF_BCD       8 0  // field no 2
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "LogTag"           DF_ASCII    20 0  // field no 3
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "User"             DF_ASCII    20 0  // field no 4
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "Application"      DF_ASCII    20 0  // field no 5
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "SessionStart"     DF_ASCII    23 0  // field no 6
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "FullTableScan"    DF_BCD       2 0  // field no 7
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "RecordsFound"     DF_BCD      10 0  // field no 8
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "RecordsSelected"  DF_BCD      10 0  // field no 9
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "UnusedFilters"    DF_BCD       4 0  // field no 10
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "Index"            DF_BCD       4 0  // field no 11
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "IndexForced"      DF_BCD       2 0  // field no 12
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "PrefetchForced"   DF_BCD       2 0  // field no 13
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "Limit"            DF_BCD       6 0  // field no 14
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "ScanComplete"     DF_BCD       2 0  // field no 15
-            Send AddColumn of oTemporaryTablesFunctions (&strTable) "TQserialised"     DF_BINARY 2040 0  // field no 16
-            Move True to strTable.bCompression
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "DateTime"         DF_ASCII    23 0  // field no 1
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "ExecTime"         DF_BCD       8 0  // field no 2
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "LogTag"           DF_ASCII    20 0  // field no 3
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "User"             DF_ASCII    20 0  // field no 4
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "Application"      DF_ASCII    20 0  // field no 5
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "SessionStart"     DF_ASCII    23 0  // field no 6
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "FullTableScan"    DF_BCD       2 0  // field no 7
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "RecordsFound"     DF_BCD      10 0  // field no 8
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "RecordsSelected"  DF_BCD      10 0  // field no 9
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "UnusedFilters"    DF_BCD       4 0  // field no 10
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "Index"            DF_BCD       4 0  // field no 11
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "IndexForced"      DF_BCD       2 0  // field no 12
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "PrefetchForced"   DF_BCD       2 0  // field no 13
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "Limit"            DF_BCD       6 0  // field no 14
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "ScanComplete"     DF_BCD       2 0  // field no 15
+            Send AddColumn of oTemporaryTablesFunctions (&stTable) "TQserialised"     DF_BINARY 2040 0  // field no 16
+            Move True to stTable.bCompression
             
-            If (CreateTable(oTemporaryTablesFunctions,strTable,True)) Begin
+            If (CreateTable(oTemporaryTablesFunctions,stTable,True)) Begin
 //                Showln "LogTableCreate Success"
                 Function_Return True
             End
@@ -5020,7 +5294,7 @@ Class cTableQueryFunctions is a cObject
             Integer iPos iItem iMax
             tTableQuery stQ 
             tTQFilterSegment stFilter
-            tTQOrderBySegment strSegment
+            tTQOrderBySegment stSegment
             String[] aValues
             Send SplitString of oStringFunctions sValue (Character(10)) False False (&aValues)
             If (SizeOfArray(aValues)>1) Begin
@@ -5040,8 +5314,8 @@ Class cTableQueryFunctions is a cObject
                     // Ordering:
                     Get _NextValueInArray aValues (&iPos) to iMax
                     For iItem from 0 to iMax
-                        Get _LogReadOrderingSegment aValues (&iPos) to strSegment
-                        Move strSegment to stQ.aOrdering[iItem]    
+                        Get _LogReadOrderingSegment aValues (&iPos) to stSegment
+                        Move stSegment to stQ.aOrdering[iItem]    
                     Loop
                 End
             End
@@ -5058,6 +5332,7 @@ Class cTableQueryFunctions is a cObject
 
             Get SystemTimeToString23 of oDateFunctions (SystemTimeMilliSeconds(oDateFunctions)) to sValue
             Set_Field_Value iLogTable 1 to sValue
+            // No meaningful value to put into ExecTime (field 2)
             Set_Field_Value iLogTable 3 to stQ._stControlBlock.sLogTag
             Get TableQueryUser to sValue
             Set_Field_Value iLogTable 4 to sValue  // (TableQueryUser(Self))
@@ -5268,7 +5543,7 @@ Class cTableQueryFunctions is a cObject
     Procedure ReplaceTableReferences tTableQuery ByRef stQ Integer iFromTable Integer iToTable 
         Integer iMax iItem
         Integer iMax2 iItem2
-        
+
         Move (SizeOfArray(stQ.aColumnSources)-1) to iMax
         for iItem from 0 to iMax
             If (stQ.aColumnSources[iItem].iTable=iFromTable) Begin
@@ -5352,45 +5627,6 @@ Class cTableQueryFunctions is a cObject
         Function_Return aRecords    
     End_Function
     
-    Function DeleteRecords tTableQuery stQ Returns Boolean
-        Integer iTable
-        String sStatement
-        tSQLStatementHandle strStatement
-        
-        If (stQ.iLimit<>0) Begin
-            Send OnError 742 "Limit not allowed on delete statement"
-        End
-        Else Begin
-
-            Send ResetOrdering (&stQ)               // Ordering irrelevant!
-            Send ResetResultSetColumns (&stQ)       // Resultset irrelevant!
-            
-            If (_QueryMethodSQL(Self,stQ)) Begin // ESQL
-
-                If (OpenStatementOnTable(oSQLStatementHandles,stQ.iTable,&strStatement)) Begin
-
-                    Move strStatement to stQ._stControlBlock.stSQLStatementHandle // Is used during the generating of the SQL statement.
-
-                    Send _TableRelateStatesReset (&stQ)
-                    Get SQLDeleteStatement stQ Self to sStatement
-//                    Move (ToANSI(sStatement)) to sStatement
-                    If (sStatement<>"") Begin
-                        Send SQLExecDirect of strStatement.hStatHandle sStatement
-                    End
-                    Send CloseStatement of oSQLStatementHandles strStatement
-                    
-                End
-            End
-            Else Begin
-                Move stQ.iTable to iTable
-                While (FindRecord(Self,&stQ))
-                    Delete iTable
-                Loop
-            End
-        End
-        Function_Return False
-    End_Function
-
 
         Function _TableRootNameStripDriver String sRootName Returns String
             Integer iPos
@@ -5424,8 +5660,8 @@ Class cTableQueryFunctions is a cObject
         Function TableAnalysisRead Integer iTable tTQTableAnalysis ByRef strA Returns Boolean
             Integer iChannel iItem iMax
             String sFile
-            tTQTableAnalysis strEmpty
-            Move strEmpty to strA
+            tTQTableAnalysis stEmpty
+            Move stEmpty to strA
             Get _TableAnalysisFileName iTable to sFile
             Get DirectInput of oFileFunctions sFile to iChannel
             If (iChannel>=0) Begin
@@ -5483,7 +5719,7 @@ Class cTableQueryFunctions is a cObject
             Integer iSegment iSegments
             Integer[] aIndices
             Number nRecordCount nFactor
-            tocIndex strIndex
+            tocIndex stIndex
             tTQTableAnalysis strA
 
             Get IndexSet of oIndexFunctions iTable 3 to aIndices // 3 means all online indices
@@ -5492,12 +5728,12 @@ Class cTableQueryFunctions is a cObject
             Move (SizeOfArray(aIndices)-1) to iMax
             For iItem from 0 to iMax
                 Move aIndices[iItem] to iIndex
-                Get IndexDefinition of oOverlapColumnFunctions iTable iIndex to strIndex
-                Move (SizeOfArray(strIndex.aSegments)) to iSegments
+                Get IndexDefinition of oOverlapColumnFunctions iTable iIndex to stIndex
+                Move (SizeOfArray(stIndex.aSegments)) to iSegments
 
                 Move (nRecordCount^(1.0/iSegments)) to nFactor
                 Move (1.0/nFactor) to nFactor
-                
+
                 Decrement iSegments
                 For iSegment from 0 to iSegments
                     Move nFactor to strA.aIndices[iIndex].aSegmentReductions[iSegment]
@@ -5515,7 +5751,7 @@ Class cTableQueryFunctions is a cObject
             Function_Return strA 
         End_Function
     
-    //> The TableAnalysis returns a struct that contains information that helps the index analyzer
+    //> The TableAnalysis returns information that helps the index analyzer
     //> to make informed guesses about which index seeds the best. VDFxray can be used to generate
     //> a small text file for each table with this information. If this is the case then function
     //> TableAnalysis will read that file and return the by now much mentioned information. And if not,
@@ -5523,7 +5759,7 @@ Class cTableQueryFunctions is a cObject
     //> by the function it is also copied to a global cache so subsequent calls will take no time.
     Function TableAnalysis Integer iTable Returns tTQTableAnalysis
         tTQTableAnalysis strA
-        
+
         Move False to strA.bInitialized
         If (SizeOfArray(_gTQaTableAnalysis)>iTable and _gTQaTableAnalysis[iTable].bInitialized) Begin
             Move _gTQaTableAnalysis[iTable] to strA
@@ -5620,12 +5856,12 @@ Class cTableQueryAnalyzer is a cObject
         Integer iCount iLevel iMax
         String[] aNewValues aOldValues
         Integer[] aBreakCounters
-        tocIndex strIndex
-        _tTQIndexAnalysis strEmpty
+        tocIndex stIndex
+        _tTQIndexAnalysis stEmpty
         tTableQuery stQ
         
-        Get IndexDefinition of oOverlapColumnFunctions iTable iIndex to strIndex
-        
+        Get IndexDefinition of oOverlapColumnFunctions iTable iIndex to stIndex
+
         Move 0 to iCount
         Get_Attribute DF_FILE_RECORDS_USED of iTable to iMax
 
@@ -5659,7 +5895,7 @@ Class cTableQueryAnalyzer is a cObject
             Send _IncrementBreakCounter (&aBreakCounters) 0
         End
 
-        Move strEmpty to stIndexA
+        Move stEmpty to stIndexA
         Send _AnalyseTableIndexAux (&stIndexA) iTable iIndex aBreakCounters
     End_Procedure
 
@@ -5672,20 +5908,20 @@ Class cTableQueryAnalyzer is a cObject
     Procedure OnAnalyseIndexProgress Integer iTable Integer iCount Integer iMax
     End_Procedure
 
-    Procedure AnalyzeTable tTQTableAnalysis ByRef strTableA Integer iTable
+    Procedure AnalyzeTable tTQTableAnalysis ByRef stTableA Integer iTable
         Integer iItem iMax iIndex
         Integer[] aIndices
         Number nElapsed nRecords
         tSystemTimeMS stStart stStop
-        tTQTableAnalysis strEmptyTable
+        tTQTableAnalysis stEmptyTable
         _tTQIndexAnalysis stIndexA
-        Move strEmptyTable to strTableA
+        Move stEmptyTable to stTableA
         Get_Attribute DF_FILE_RECORDS_USED of iTable to nRecords
 
         If (nRecords>100) Begin
             Get SystemTimeMilliSeconds of oDateFunctions to stStart
 
-            Get_Attribute DF_FILE_RECORDS_USED of iTable to strTableA.nNumberOfRecords
+            Get_Attribute DF_FILE_RECORDS_USED of iTable to stTableA.nNumberOfRecords
             Get IndexSet of oIndexFunctions iTable 3 to aIndices // All on-line indices
             Move (SizeOfArray(aIndices)-1) to iMax
 
@@ -5695,14 +5931,14 @@ Class cTableQueryAnalyzer is a cObject
                 Move aIndices[iItem] to iIndex
                 Send OnAnalyseTableIndex iTable iIndex iItem (iMax+1)
                 Send _AnalyseTableIndex (&stIndexA) iTable iIndex
-                Move stIndexA to strTableA.aIndices[iIndex]
+                Move stIndexA to stTableA.aIndices[iIndex]
             Loop
             Send OnAnalyseTableIndex iTable iIndex (iMax+1) (iMax+1)
             Get SystemTimeMilliSeconds of oDateFunctions to stStop
             Get SystemTimeMilliSecondsElapsed of oDateFunctions stStart stStop to nElapsed
-            Get MilliSecondsToTimeString of oDateFunctions nElapsed to strTableA.sTimeToComplete
+            Get MilliSecondsToTimeString of oDateFunctions nElapsed to stTableA.sTimeToComplete
 
-            Get SystemDateTime of oDateFunctions to strTableA.dtAnalysisDateTime
+            Get SystemDateTime of oDateFunctions to stTableA.dtAnalysisDateTime
         End
     End_Procedure
 
@@ -5779,3 +6015,4 @@ Class cTableQueryTester is a cObject
         Function_Return aMatrix
     End_Function
 End_Class // cTableQueryTester
+

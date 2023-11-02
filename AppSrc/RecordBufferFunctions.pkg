@@ -1,4 +1,4 @@
-Use VdfBase.pkg // DAW package. Provides low level support expected of all DF applications (windows and webapp)
+﻿Use VdfBase.pkg // DAW package. Provides low level support expected of all DF applications (windows and webapp)
 
 Use TableAccessFunctions.pkg
 Use IndexFunctions.pkg
@@ -361,6 +361,27 @@ Object _oRecordBufferFunctions is a cObject
         Get ShadowTableNumber iTable to iTable
         Set_Field_Value iTable iColumn to sValue
     End_Procedure
+
+    // Only works if iIndex is a single segment index
+    Function FindByPrimary Integer iTable String sRecordId Returns Boolean
+        Integer iColumn iIndex IdxSize
+    
+        Get_Attribute DF_FILE_PRIMARY_INDEX of iTable to iIndex
+    
+        Get_Attribute DF_INDEX_NUMBER_SEGMENTS of iTable iIndex to IdxSize
+        If (IdxSize=1) Begin
+            Get_Attribute DF_INDEX_SEGMENT_FIELD of iTable iIndex 1 to iColumn
+            Clear iTable
+            Set_Field_Value iTable iColumn to sRecordId
+            Vfind iTable iIndex EQ
+            Function_Return (Found)
+        End
+        Else Begin
+            Error DFERR_PROGRAM "FindByPrimary called with wrong index"
+        End
+        Function_Return False
+    End_Function
+
 End_Object
 
 //Struct tawRecordBufferRecursive
