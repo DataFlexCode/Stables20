@@ -1,4 +1,4 @@
-Use VdfBase.pkg
+﻿Use VdfBase.pkg
 
 Use cli.pkg // DAW package
 
@@ -16,6 +16,7 @@ Enumeration_List // Driver ID's
 End_Enumeration_List
 
 Struct tConnectivityServer
+    String sServer  // MJP Fix; added to fix compile error
 End_Struct
 
 Struct tConnectivityDriver
@@ -34,25 +35,25 @@ Global_Variable Integer oTableDriverFunctions
 Object _oTableDriverFunctions is a cObject
     Move Self to oTableDriverFunctions
 
-            Procedure _AddDriver tConnectivityDriver[] ByRef aDrivers Integer iDriver String sName String sDll String sManufacturer
-                Move sName to aDrivers[iDriver].sName
-                Move sDll to aDrivers[iDriver].sDll
-                Move sManufacturer to aDrivers[iDriver].sManufacturer
-            End_Procedure
+    Procedure _AddDriver tConnectivityDriver[] ByRef aDrivers Integer iDriver String sName String sDll String sManufacturer
+        Move sName to aDrivers[iDriver].sName
+        Move sDll to aDrivers[iDriver].sDll
+        Move sManufacturer to aDrivers[iDriver].sManufacturer
+    End_Procedure
 
-            Procedure _register_known_drivers
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_ERROR      "(Error)"           ""         ""            ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_UNKNOWN    "Unknown"           ""         ""            ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_DATAFLEX   "Embedded"          "DATAFLEX" "Data Access" ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_PERVASIVE  "Pervasive"         "DFBTRDRV" "Data Access" ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_ORACLE     "Oracle"            "ORA_DRV"  "Mertech"     ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_MS_SQL     "MS-SQL (MT)"       "SQL_DRV"  "Mertech"     ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_DB2        "DB/2"              "DB2_DRV"  "Data Access" ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_ODBC       "ODBC"              "ODBC_DRV" "Data Access" ""
-                Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_MS_SQL_DAW "MS-SQL (DAW)"      "MSSQLDRV" "Data Access" ""
-                // If any drivers are missing, let me know @ sture@stureaps.dk
-            End_Procedure
-            Send _register_known_drivers    
+    Procedure _register_known_drivers
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_ERROR      "(Error)"           ""         ""            ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_UNKNOWN    "Unknown"           ""         ""            ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_DATAFLEX   "Embedded"          "DATAFLEX" "Data Access" ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_PERVASIVE  "Pervasive"         "DFBTRDRV" "Data Access" ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_ORACLE     "Oracle"            "ORA_DRV"  "Mertech"     ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_MS_SQL     "MS-SQL (MT)"       "SQL_DRV"  "Mertech"     ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_DB2        "DB/2"              "DB2_DRV"  "Data Access" ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_ODBC       "ODBC"              "ODBC_DRV" "Data Access" ""
+        Send _AddDriver (&gaConnectivityDrivers) TD_DRIVER_MS_SQL_DAW "MS-SQL (DAW)"      "MSSQLDRV" "Data Access" ""
+        // If any drivers are missing, let me know @ sture@stureaps.dk
+    End_Procedure
+    Send _register_known_drivers    
     
     Procedure CallBackDrivers Integer hMsg Integer hObj
         Integer iMax iIndex

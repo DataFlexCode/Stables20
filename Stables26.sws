@@ -1,0 +1,12 @@
+{
+    "df": 26.0,
+    "projects": [
+        "TestProjects/TestFunctions.src",
+        "WebApp.src",
+        "Projects/chmdecoder/dfChmDecoder.src",
+        "TestProjects/TestNewGrid.src",
+        "Stables20WorkspaceCopier.src",
+        "VDFQueryWorkspaceCopier.src",
+        "TestFileFunctions.src"
+    ]
+}

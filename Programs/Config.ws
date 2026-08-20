@@ -1,12 +1,12 @@
 [Workspace]
 Home=..\
-AppSrcPath=.\AppSrc
-AppHTMLPath=.\AppHtml
-BitmapPath=.\Bitmaps
-IdeSrcPath=.\IdeSrc
-DataPath=.\Data
-DDSrcPath=.\DdSrc
-HelpPath=.\Help
-ProgramPath=.\Programs
-FileList=.\Data\Filelist.cfg
-Description=StureAps public library
+AppSrcPath=AppSrc
+AppHTMLPath=.
+BitmapPath=.
+IdeSrcPath=IdeSrc
+DataPath=Data
+DDSrcPath=DDSrc
+HelpPath=.
+ProgramPath=Programs
+FileList=Data\FILELIST.CFG
+Description=Stables26
